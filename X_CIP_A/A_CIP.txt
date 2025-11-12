@@ -72,7 +72,7 @@ VAR_GLOBAL
 	M02050 AT %M02050 : BOOL; (* CIP Soda Tank2 Canceled *)
 	P4M69 AT %M00069 : BOOL; (* CIPS "A" PUMP TO "RUN" *)
 	R00437 AT %R00437 : ARRAY [0..3] OF WORD;
-	R00440 AT %R00440 : ARRAY [0..3] OF WORD;
+	R00440 AT %R00440 : ARRAY [0..3] of WORD;
 	R00536 AT %R00536 : ARRAY [0..64] OF WORD;
 	R00610 AT %R00610 : INT;
 	R09009 AT %R09009 : INT;
@@ -113,13 +113,13 @@ AUX1[0] := INT_TO_WORD(COND_3 - 0);
 ACID_OK := A2_STRT AND NOT A2USE_S AND NOT A_STOP AND NOT A_END AND (C_A_CLC >= WORD_TO_INT(AUX1[0]));
 
 (* Rung 2: Soda comes from reactor-end wash *)
-AUX1[0] := INT_TO_WORD(COND_45 - 0);
+AUX1[0] := INT_to_WORD(COND_45 - 0);
 SODA_OK := A2_STRT AND A2USE_S AND NOT A_STOP AND NOT A_END AND (C_A_CLC >= WORD_TO_INT(AUX1[0]));
 
 (* Rung 3: CIP A receives clean water *)
 WTR_OK := A3_STRT AND NOT A_STOP AND NOT A_END AND (C_A_CLC < 5);
 
-(* Rung 4: CIP A fills the reactor *)
+(* Rung 4: Initiates the reactor filling process (`A_FILLS`). This is triggered by the start of any CIP stage (`A1_STRT`, `A2_STRT`, `A3_STRT`) from `A_CMD.txt`, or by the return fluid being within conductivity specs (`SODA_OK`, `ACID_OK`, `WTR_OK`). The process continues until the reactor is full (`A_FULL`). *)
 IF (A1_STRT OR SODA_OK OR ACID_OK OR WTR_OK OR A3_STRT) AND NOT A_STOP AND NOT A_END AND NOT A_FULL THEN
 	A_FILLS := TRUE;
 END_IF;
@@ -171,13 +171,16 @@ END_IF;
 
 (* Rung 13: COMMENT1 *)
 
-(* Rung 14: FROM FRESH WATER TANK TO CIPS " *)
+(* Rung 14: Controls the fresh water supply valve (`XVM025`). The valve is opened during Stage 3 (final rinse), or during Stage 1 (pre-rinse) if the recovery water tank is busy (`T2_BUSY`). This ensures a continuous supply of water for rinsing operations. *)
 XVM025 := CANFILL AND NOT A_FULL AND ((A1_STRT AND T2_BUSY) OR A3_STRT) AND NOT T1_BUSY;
 
 (* Rung 15: FROM RETURN WATER TANK TO CIPS *)
 XVM036 := CANFILL AND NOT A_FULL AND A1_STRT AND NOT T2_BUSY;
 
-(* Rung 16: FROM ASID TANK TO SIPS "A" TO " *)
+(* Rung 16: Controls the chemical supply valves for the Stage 2 wash. It selects the appropriate chemical based on the `A2USE_S` flag (soda or acid) and which soda tank is active (`T4ACTIV`).
+    - `XVM028`: Opens the valve for Soda Tank 1.
+    - `XVM031`: Opens the valve for Soda Tank 2.
+    - `XVM034`: Opens the valve for the Acid Tank. *)
 XVM028 := CANFILL AND NOT A_FULL AND A2_STRT AND A2USE_S AND T4ACTIV;
 XVM031 := CANFILL AND NOT A_FULL AND A2_STRT AND A2USE_S AND M02050 AND NOT LOLVL4;
 XVM034 := CANFILL AND NOT A_FULL AND A2_STRT AND NOT A2USE_S;
@@ -208,8 +211,11 @@ END_IF;
 (* Rung 21: M00304 *)
 M00304 := _ALW_ON AND A2_STRT AND (R09009 >= R00610);
 
-(* Rung 22: CIPR "A" TO WASTE *) 
-VAR 
+(* Rung 22: Controls the waste valve (`XVM011`). This valve is opened to send fluid to the drain under several conditions:
+    - During the chemical wash (`A2_STRT`) if any of the chemical return tanks are full (indicated by the high-level switches `LSH*`).
+    - During the final rinse (`A3_STRT`) if the recovery water tank is full (`LSH3074`).
+    - During the pre-rinse (`A1_STRT`). *)
+VAR
 	_Rung22Help1 : BOOL;
 	_Rung22Help2 : BOOL;
 	_Rung22Help3 : BOOL;
@@ -219,19 +225,22 @@ _Rung22Help1 := (CANFILL AND NOT A_FILLS AND A_FULL AND A2_STRT) AND LSH3079 AND
 															   OR (LSH3076 AND A2USE_S);
 
 _Rung22Help2 := A3_STRT AND LSH3074;
-_Rung22Help3 := A1_STRT AND ((A_FULL AND A1USE_R) OR _ALW_ON) AND NOT A_STOP AND NOT A_END ;													   
-XVM011 := _Rung22Help1 OR _Rung22Help2 OR _Rung22Help3;								   
-															   
+_Rung22Help3 := A1_STRT AND ((A_FULL AND A1USE_R) OR _ALW_ON) AND NOT A_STOP AND NOT A_END ;
+XVM011 := _Rung22Help1 OR _Rung22Help2 OR _Rung22Help3;
+
 
 (* Rung 23: CIPR "A" TO RETURN WATER TANK T *)
 XVM008 := (A_FULL OR _ALW_ON) AND NOT A_STOP AND NOT A_END) AND (A1_STRT AND NOT A1USE_R AND _ALW_OFF) OR (A3_STRT AND NOT LSH3074);
 
-(* Rung 24: CIPR "A" TO ASID TANK TO "OPEN" *)
+(* Rung 24: Controls the return valves to the chemical tanks. This logic routes the used chemical solution back to the correct tank after the wash cycle, based on which chemical was used (`A2USE_S`) and which soda tank is active (`T4ACTIV`).
+    - `XVM002`: Opens the return valve to Soda Tank 1.
+    - `XVM004`: Opens the return valve to Soda Tank 2.
+    - `XVM006`: Opens the return valve to the Acid Tank. *)
 XVM002 := A2_STRT AND NOT A_STOP AND NOT A_END AND _ALW_ON AND A2USE_S AND T4ACTIV AND NOT LSH3079;
 XVM004 := A2_STRT AND NOT A_STOP AND NOT A_END AND _ALW_ON AND A2USE_S AND NOT T4ACTIV AND NOT LSH3068 AND M02050;
 XVM006 := A2_STRT AND NOT A_STOP AND NOT A_END AND _ALW_ON AND NOT A2USE_S;
 
-(* Rung 25: CIP A Stage 3 started *)
+(* Rung 25: Resets all stage and status flags for the CIP A line when the `A_END` signal is received from the command logic in `A_CMD.txt`. This ensures the system is in a clean state before the next CIP sequence begins. *)
 IF A_END THEN
 	A_FILLS := FALSE;
 	A_FULL := FALSE;

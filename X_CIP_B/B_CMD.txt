@@ -76,7 +76,7 @@ END_VAR
 
 (* Rung 1: COMMENT0 *)
 
-(* Rung 2: Current Reactor number for CIP B *)
+(* Rung 2: Decodes the incoming `CIPBCMD`. This command is a composite integer where the upper 8 bits represent the reactor number and the lower 8 bits represent the command code. This rung extracts the reactor number and the command code using bitwise AND operations, allowing the rest of the program to use them as separate values. *)
 (* This logic checks if the command word contains extended information.
  If the value is greater than 255, it assumes the high byte is the
  reactor number and the low byte is the actual command. *)
@@ -146,7 +146,11 @@ IF #ALW_ON AND CMD_END THEN
 	R00436 := 0;
 END_IF;
 
-(* Rung 17: COMMENT3 *)
+(* Rung 17-22: This block forms the core of the CIP B state machine. It processes the decoded commands to start the appropriate cleaning stage, ensuring that only one stage is active at a time.
+    - Rung 18: Starts Stage 1 (`B1_STRT`) when `CMD_S1` is received.
+    - Rung 20: Starts Stage 2 (`B2_STRT`) when `CMD_S2S` (soda) or `CMD_S2A` (acid) is received, and sets the `B2USE_S` flag accordingly.
+    - Rung 22: Starts Stage 3 (`B3_STRT`) when `CMD_S3` is received. *)
+(* COMMENT3 *)
 
 (* Rung 18: CIP B stage 1 started *)
 IF (CMD_S1 AND (NOT B1_STRT) AND (NOT B2_STRT) AND (NOT B3_STRT) AND (NOT B_STOP)) THEN
@@ -175,7 +179,7 @@ END_IF;
 
 (* Rung 23: COMMENT6 *)
 
-(* Rung 24 : CIP B stopped *)
+(* Rung 24: Consolidates multiple stop conditions into a single `B_STOP` flag. This is a critical safety feature that halts the CIP B sequence if a global stop (`STOPALL`), a CIP B alarm (`B_ALARM`), or an HMI stop command (`BMMISTP`) is active. *)
 B_STOP := (BMMISTP OR STOPALL OR B_ALARM OR M00299) AND (NOT B_END);
 IF B_STOP THEN
 	R09061 := 555;
@@ -184,7 +188,7 @@ END_IF;
 (* Rung 25*)
 IF #ALW_ON AND (NOT B_STOP) THEN
     R09061 := 0;
-END_IF;	
+END_IF;
 
 
 (* Rung 26: CIP B ended *)

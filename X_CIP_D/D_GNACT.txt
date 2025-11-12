@@ -97,13 +97,17 @@ VAR
 	R09355 : TON;
 END_VAR
 
-(* Rung 1 *)
+(* Rung 1-15: This block controls the return-side valves, routing the fluid to the correct destination based on the current step of the state machine and the selected CIP type.
+    - Rung 2: Opens the recovery water return valve (`XV4108_Cmd`).
+    - Rung 7: Opens the acid return valve (`XV4106_Cmd`).
+    - Rung 10, 13: Open the soda return valves (`XV4102_Cmd`, `XV4104_Cmd`).
+    - Rung 15: Opens the drain valve (`XV4111_Cmd`). *)
 (* COMMENT0 *)
 
 (* Rung 2 *)
 (* CIP_D Return To Water Recovery Tank *)
 XV4108_Cmd := ((D_Step61 OR D_Step62 OR D_Step88 OR D_Step100 OR D_Step90
-				OR(D_Step82 OR D_Step83 OR D_Step84 AND CIP_Rinsing)))AND NOT LSH3074_ON) 
+				OR(D_Step82 OR D_Step83 OR D_Step84 AND CIP_Rinsing)))AND NOT LSH3074_ON)
 
 
 (* Rung 3 *)
@@ -124,7 +128,7 @@ LSH3074_OFF := R09355.Q
 
 (* Rung 7 *)
 (* CIP_D Return To Acid Tank *)
-XV4106_Cmd := D_Step68 OR D_Step69 OR D_Step63 OR D_Step64 
+XV4106_Cmd := D_Step68 OR D_Step69 OR D_Step63 OR D_Step64
 			  OR((D_Step81 OR D_Step82 OR D_Step83 OR D_Step84)AND(CIP_Acid OR CIP_All);
 
 (* Rung 8 *)
@@ -164,7 +168,11 @@ XV4111_Cmd := (D_Step1 OR D_Step2 OR D_Step3 OR D_Step4 OR D_Step8 OR D_Step9 OR
 				OR ((D_Step82 OR D_Step83 OR D_Step84)AND CIP_Rinsing );
 
 
-(* Rung 16 *)
+(* Rung 16-27: This block controls the supply-side valves for the CIP D line, selecting the correct fluid source based on the current step of the state machine.
+    - Rung 17: Opens the recovery water valve (`XV4125_Cmd`).
+    - Rung 19: Opens the acid valve (`XV4136_Cmd`).
+    - Rung 22, 25: Open the soda valves (`XV4134_Cmd`, `XV4128_Cmd`).
+    - Rung 27: Opens the fresh water valve (`XV4131_Cmd`). *)
 (* COMMENT5 *)
 
 (* Rung 17 *)
@@ -206,7 +214,7 @@ XV4128_Cmd := _Bit OR D_Step23 OR D_Step24 OR D_Step28 OR D_Step29;
 
 (* Rung 27 *)
 (* CIP_D Fresh Water *)
-XV4131_Cmd := NOT T1_BUSY AND((D_Step81 OR D_Step83 OR D_Step84 OR D_Step88 OR D_Step100) 
+XV4131_Cmd := NOT T1_BUSY AND((D_Step81 OR D_Step83 OR D_Step84 OR D_Step88 OR D_Step100)
 			   OR ((D_Step1 OR D_Step3 OR D_Step4 OR D_Step8 OR D_Step9
 				   OR D_Step41 OR D_Step44 OR D_Step43 OR D_Step48 OR D_Step49)AND T2_BUSY);
 
@@ -221,7 +229,7 @@ XV4181_Cmd := D_Step1 OR D_Step3 OR D_Step4 OR D_Step8 OR D_Step9
 			  OR D_Step61 OR D_Step63 OR D_Step64 OR D_Step68 OR D_Step69 OR D_Step81
 			  OR D_Step83 OR D_Step84 OR D_Step88 OR D_Step100;
 
-(* Rung 30 *)
+(* Rung 30-32: This block controls the main CIP D pump (`P4169_Start_Cmd`). The pump is activated whenever any of the cleaning or rinsing steps are active, and there are no active hold or stop commands. *)
 (* COMMENT11 *)
 
 (* Rung 31 *)

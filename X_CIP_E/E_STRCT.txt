@@ -25,7 +25,7 @@ The program can manage several CIP cycle types, including Rinsing, Soda (Short/L
 - `CIP_Rinsing_R30`, `CIP_Soda_R30_40`, `CIP_Acid_R30_40` (BOOL): Flags indicating the active cleaning type.
 - `N_Step_E` (%M01321) (BOOL): A one-shot flag that is TRUE for one scan when the stepper value changes.
 - `CIP_E_Ended` (%M01327) (BOOL): A flag set to TRUE upon successful completion of the sequence.
-- `Scan_R30` (%M01322) (BOOL): A control bit used like `Step_Jump` to ensure only one step transition occurs per scan.
+- `Scan_R30` (%M01322) (BOOL): A control bit used like `Step_Jump` to ensure only one step transition occurs per PLC scan.
 
 @notes
 - This code is for a GE/Emerson RX3i PLC and is written in Structured Text (ST).
@@ -248,12 +248,16 @@ Monitor_Vol_R30 := (E_Step1 OR E_Step21 OR E_Step28 OR E_Step41 OR E_Step61 OR E
 					AND ((R30_CIP_Running AND NOT Rx_Hold_E_SEQ_R30 AND NOT Rx_Cooker_Fault_R30)
 						  OR (R40_CIP_Running AND NOT Rx_R40_Hold_E_SEQ AND NOT Rx_R40_Fault))
 					AND NOT N_Step_E AND NOT E_Farm_FLT AND (INT_TO_REAL(FQ207) >= VolSP_E);
-					
+
 
 (* Rung 31: MonitorDwn_FQ_R30 *)
 MonitorDwn_FQ_R30 := FIT207_Pre - FQ207;
 
-(* Rung 32: Reset *)
+(* Rung 32-35: This block handles the reset logic for the CIP E sequence.
+    - Rung 33: Resets the stepper to step 0 if a reset or abort signal is received from the R30 or R40 PLCs, or if the `RST_E` button is pressed on the HMI.
+    - Rung 34: Resets the elapsed time counter.
+    - Rung 35: Resets the monitoring timers and counters. *)
+(* Reset *)
 
 (* Rung 33: Steper *)
 IF RST_E OR (R30_CIP_Running AND (Rx_Reset_SEQ_R30 OR Rx_Abord_R30))
@@ -286,7 +290,8 @@ CIP_E_FarmeCondition := (((CIP_Acid_R30_40 AND LOLVL3) OR (CIP_Soda_R30_40 AND L
 						AND (LOLVL2 OR LOLVL1)) AND NOT E_Farm_FLT AND E_Step0 AND NOT STOPALL;
 
 
-(* Rung 40: Step 0 Idle | 1- שטיפה ראשונה | 21- סודה | 41-שטיפת ביניים | 61- חומצה | 81- שטיפה אחרונה *)
+(* Rung 40-87: This block constitutes the main body of the CIP E state machine. It is a slave process that is driven by external commands from the R30 and R40 reactor PLCs. Each rung checks for a specific step command (e.g., `R30_S110`) and, if the command is active, jumps the `E_Steper` to the corresponding step. The `Scan_R30` variable is used to ensure only one transition occurs per scan. *)
+(* Step 0 Idle | 1- שטיפה ראשונה | 21- סודה | 41-שטיפת ביניים | 61- חומצה | 81- שטיפה אחרונה *)
 
 (* Rung 41: Steper *)
 IF NOT Scan_R30 AND
@@ -492,7 +497,7 @@ END_IF;
 (* Rung 90: CIP_E_Active *)
 CIP_E_Active := R30_CIP_Running OR R40_CIP_Running;
 
-(* Rung 91: CIP_E_Ended *)
+(* Rung 91: Resets the `CIP_E_Ended` flag after a 30-second delay. This ensures the flag is visible to other parts of the system for a short period before being cleared for the next sequence. *)
 TMR_R09360(IN:= CIP_E_Ended, PT:=T#30S);
 IF TMR_R09360.Q THEN
 	CIP_E_Ended := FALSE;

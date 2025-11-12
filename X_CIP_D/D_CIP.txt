@@ -24,6 +24,8 @@ The execution order is as follows:
 - This file is an excellent example of a structured, modular programming approach in a PLC environment. It acts as the "main" function for the entire Line D process, providing a clear and easy-to-follow overview of the program's scan cycle.
 - The order of execution is deliberate, ensuring that inputs are read before logic is executed, and logic is executed before outputs are written, which is a fundamental principle of robust PLC programming.
 *)
+
+(* This master routine orchestrates the entire CIP D process by calling a series of sub-programs in a specific order. This modular approach separates I/O handling, error checking, sequencing logic, and physical output control into distinct files, making the system easier to manage and troubleshoot. *)
 (* Rung 1 *)
 D_AI();
 

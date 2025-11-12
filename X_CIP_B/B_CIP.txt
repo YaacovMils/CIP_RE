@@ -52,7 +52,7 @@ VAR_GLOBAL
 	SODA_OK AT %T00003 : BOOL; (* Soda comes from reactor-end wash *)
 	WTR_OK AT %T00002 : BOOL; (* CIP A receives clean water *)
 	_Bit AT %T00002 : BOOL; (* temporary bit *)
-	
+
 	// Global Variables from Interface
 	#ALW_OFF AT %S00008 : BOOL; (* Always OFF *)
 	#ALW_ON AT %S00007 : BOOL; (* Always ON *)
@@ -120,7 +120,7 @@ SODA_OK := B2_STRT AND B2USE_S AND NOT B_STOP AND NOT B_END AND (C_B_CLC >= (CON
 (* Rung 3 *)
 WTR_OK := B3_STRT AND NOT B_STOP AND NOT B_END AND (C_B_CLC < 20);
 
-(* Rung 4 *)
+(* Rung 4: Initiates the reactor filling process (`B_FILLS`). This is triggered by the start of any CIP stage (`B1_STRT`, `B2_STRT`, `B3_STRT`) from `B_CMD.txt`, or by the return fluid being within conductivity specs (`SODA_OK`, `ACID_OK`, `WTR_OK`). The process continues until the reactor is full (`B_FULL`). *)
 IF (B1_STRT OR SODA_OK OR ACID_OK OR WTR_OK) AND NOT B_STOP AND NOT B_END AND NOT B_FULL THEN
 	B_FILLS := TRUE;
 END_IF;
@@ -180,10 +180,13 @@ END_IF;
 
 (* Rung 15 *)
 _Bit:= #ALW_OFF AND XVM020 AND (CIPBCMD >= 1 AND CIPBCMD <= 7)
-	
 
 
-(* Rung 16 *)
+
+(* Rung 16-25: This block controls the supply valves for the CIP B line, selecting the correct fluid source based on the current cleaning stage.
+    - Rung 17: Opens the fresh water valve (`XVM026`) for Stage 3 (final rinse) or Stage 1 if recovery water is unavailable.
+    - Rung 19: Opens the recovery water valve (`XVM037`) for Stage 1 (pre-rinse).
+    - Rung 21-25: Open the appropriate chemical valve (`XVM029`, `XVM032`, `XVM035`) for Stage 2, based on whether soda or acid is selected. *)
 (* XV04026 *)
 
 (* Rung 17 *)
@@ -243,7 +246,10 @@ END_IF;
 (* Rung 32 *)
 M00305 := #ALW_ON AND B2_STRT AND (R09010 >= R00610);
 
-(* Rung 33 *)
+(* Rung 33-41: This block controls the return-side valves, routing the fluid to the correct destination based on the current stage and tank levels.
+    - Rung 34: Opens the waste valve (`XVM010`) if the return tanks are full or during the pre-rinse stage.
+    - Rung 36: Opens the recovery water valve (`XVM009`) during the final rinse.
+    - Rung 38-41: Open the appropriate chemical return valve (`XVM003`, `XVM005`, `XVM007`) during Stage 2. *)
 (* XV4010 *)
 
 (* Rung 34 *)
@@ -254,8 +260,8 @@ XVM010 := ((CANFILL AND NOT B_FILLS AND (B_FULL OR LSH3079) AND B2_STRT AND ((LS
 		  OR (B3_STRT AND LSH3074)
 		  OR (B1_STRT AND #ALW_ON AND (B1USE_R OR #ALW_ON) AND NOT B_STOP AND NOT B_END)
 		  OR (RET_WAT AND NOT XVM009)
-		  ) AND NOT XVM007;												
-																	
+		  ) AND NOT XVM007;
+
 
 (* Rung 35 *)
 (* XV4009 CIPR "B" Recovery Water Fill *)
@@ -279,7 +285,7 @@ XVM005 := B2_STRT AND NOT B_STOP AND NOT B_END AND T4ACTIV AND NOT LSH3068 AND M
 (* XV4007 *)
 XVM007 := (B2_STRT AND NOT B_STOP AND NOT B_END AND NOT B2USE_S) OR (#ALW_OFF AND RET_WAT AND NOT LSH3076 AND NOT #ALW_OFF);
 
-(* Rung 42 *)
+(* Rung 42: Resets all stage and status flags for the CIP B line when the `B_END` signal is received from the command logic in `B_CMD.txt`. This ensures the system is in a clean state before the next CIP sequence begins. *)
 (* CIP B ended *)
 
 (* Rung 43 *)

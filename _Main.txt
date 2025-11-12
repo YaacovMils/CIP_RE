@@ -21,7 +21,7 @@ Its primary responsibilities include:
 - `Prod_Bool_To_PLC2[0]`, `Prod_Bool_To_PLC4[0]`: The "live bits" sent to PLC2 and PLC4 to confirm this PLC is running.
 - `SEC_PLS`, `MIN_PLS`: One-shot global clock pulse flags that are TRUE for a single scan every second and minute, respectively.
 - `C_ALARM`: A flag to reset the CIP C alarm state.
-- It calls numerous subroutines which in turn modify a wide range of global variables.
+- It calls numerous subroutines which in turn modify a wide of global variables.
 
 @notes
 - This code is for a GE/Emerson RX3i PLC and is written in Structured Text (ST).
@@ -36,7 +36,7 @@ VAR_GLOBAL
 	"#T_SEC" AT %S00005 : BOOL; (* 1.0 second timer contact *)
 	C_ALARM AT %M00172 : BOOL; (* CIP C in alarm state. *)
 	Conc_Bool_From_PLC2 : ARRAY[0..16] OF BOOL;
-	Conc_Bool_From_PLC4 : ARRAY[0..16] OF BOOL;
+	Conc_Bool_From_PLC4 : ARRAY[0..16] of BOOL;
 	M01125 AT %M01125 : BOOL;
 	M02050 AT %M02050 : BOOL; (* CIP Soda Tank2 Canceled *)
 	MIN_PLS AT %G00002 : BOOL;
@@ -45,8 +45,8 @@ VAR_GLOBAL
 	PB_Start_SIP AT %M01123 : BOOL; (* HMI Start SIP *)
 	PB_Stop_CIP AT %M01122 : BOOL; (* HMI Stop CIP *)
 	PB_Stop_SIP AT %M01124 : BOOL; (* HMI Stop SIP *)
-	Prod_Bool_To_PLC2 : ARRAY[0..16] OF BOOL;
-	Prod_Bool_To_PLC4 : ARRAY[0..16] OF BOOL;
+	Prod_Bool_To_PLC2 : ARRAY[0..16] of BOOL;
+	Prod_Bool_To_PLC4 : ARRAY[0..16] of BOOL;
 	SEC_PLS AT %G00001 : BOOL;
 	STR_SCR AT %G00227 : BOOL; (* START FRM T.SCREEN *)
 	T00096 AT %T00096 : BOOL;
@@ -54,31 +54,31 @@ VAR_GLOBAL
 	_Rung9_Edge_Detector : BOOL; (* Helper for Rung 9 positive transition *)
 END_VAR
 
-(* Rung 1: Live Bit PLC2 *)
+(* Rung 1: EGD Communication Heartbeat with PLC2 *)
 
-(* Rung 2: Live Bit PLC2 *)
+(* Rung 2: Toggles a boolean bit and sends it to PLC2 (`Prod_Bool_To_PLC2[0]`) based on the state of the bit received from PLC2 (`Conc_Bool_From_PLC2[0]`). This creates a "heartbeat" to monitor the communication link. If the received bit stops toggling, it indicates a communication failure. *)
 Prod_Bool_To_PLC2[0] := NOT Conc_Bool_From_PLC2[0];
 
-(* Rung 3: Live Bit PLC4 *)
+(* Rung 3: EGD Communication Heartbeat with PLC4 *)
 
-(* Rung 4: Live Bit PLC4 *)
+(* Rung 4: Toggles a boolean bit and sends it to PLC4 (`Prod_Bool_To_PLC4[0]`) based on the state of the bit received from PLC4 (`Conc_Bool_From_PLC4[0]`). This creates a "heartbeat" to monitor the communication link. *)
 Prod_Bool_To_PLC4[0] := NOT Conc_Bool_From_PLC4[0];
 
 (* Rung 5 *)
 
-(* Rung 6: CIP Soda Tank2 Canceled *)
-M02050 := FALSE;
+(* Rung 6: Disabled feature flag for "CIP Soda Tank2 Canceled". *)
 
-(* Rung 7: CIP Soda Tank2 Canceled *)
+(* Rung 7: This rung unconditionally resets the M02050 flag. The following rung contains a self-latching circuit for M02050 that is never triggered, indicating this feature is currently disabled. *)
+M02050 := FALSE;
 IF M02050 THEN
 	M02050 := TRUE;
 END_IF;
 
-(* Rung 8 *)
+(* Rung 8: Generates a global one-second clock pulse (`SEC_PLS`). This pulse is used as a timer and for synchronization in various program blocks, including `BRL_CMD`, `D_STRCT`, and `E_GNACT`. The rising-edge detector ensures it stays TRUE for only one PLC scan. *)
 SEC_PLS := (#ALW_ON AND #T_SEC) AND NOT _Rung8_Edge_Detector;
 _Rung8_Edge_Detector := #ALW_ON AND #T_SEC;
 
-(* Rung 9 *)
+(* Rung 9: Generates a global one-minute clock pulse (`MIN_PLS`). This pulse is used for longer-duration timing functions, primarily within the `STERLS` (Sterilization) program block. The rising-edge detector ensures it stays TRUE for only one PLC scan. *)
 MIN_PLS := (#ALW_ON AND #T_MIN) AND NOT _Rung9_Edge_Detector;
 _Rung9_Edge_Detector := #ALW_ON AND #T_MIN;
 

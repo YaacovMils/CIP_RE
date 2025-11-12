@@ -70,7 +70,7 @@ END_VAR
 
 (* Rung 1: Config CIP Barrel Num *)
 
-(* Rung 2: CFG CIP BARREL No1 *)
+(* Rung 2-4: These rungs identify which barrels are configured for cleaning. If the barrel CIP process is running (`BR_WORK`), they check if a barrel number has been entered from the HMI (`CIP_BRLx_No > 0`) and set the corresponding configuration flag (`CFG_BRLx`). *)
 IF BR_WORK THEN
     CIP_BRL1_No := CIP_BRL1_No; (* MOVE_INT self-copy as per description *)
     IF CIP_BRL1_No > 0 THEN
@@ -120,7 +120,7 @@ END_IF;
 
 (* Rung 12: Q_FR,Soda,LR TO SQL *)
 
-(* Rung 13: CIP_SIP_LOG.REAL[1] *)
+(* Rung 13-15: These rungs log the total consumed volumes for each phase of the CIP process. As each stage (`BR_ST1`, `BR_ST2`, `BR_ST3`) becomes active, the current totalized flow from the CIP C line (`FQCCQTY`) is captured and stored in the corresponding logging variable (`CIP_Q_FR`, `CIP_Q_SODA`, `CIP_Q_LR`). *)
 IF BR_ST1 THEN
     CIP_Q_FR := INT_TO_REAL(FQCCQTY);
 END_IF;
@@ -144,16 +144,16 @@ END_IF;
 _Bit := (TMR1_CIP > 13);
 
 
-(* Rung 18 *)
+(* Rung 18: After a 13-second delay initiated by the `En_CIP_SEQ` signal, this rung resets all barrel configuration and logging variables. This prepares the system for the next barrel cleaning sequence by clearing the barrel numbers, consumed volume logs, and configuration flags. *)
 IF _Bit THEN
     CIP_BRL1_No := 0;
     CIP_BRL2_No := 0;
     CIP_BRL3_No := 0;
-    
+
     CIP_Q_FR := 0.0;
     CIP_Q_LR := 0.0;
     CIP_Q_SODA := 0.0;
-    
+
     TMR1_CIP := 0;
 
     En_CIP_SEQ := FALSE;
@@ -185,7 +185,7 @@ END_IF;
 
 (* Rung 23: Start Barrel CIP *)
 
-(* Rung 24: Barrel CIP in process *)
+(* Rung 24: This rung contains the master start logic for the barrel CIP sequence. It initiates the process (`BR_WORK`) when a start command is received from a physical button (`PB3091`) or the HMI (`STR_SCR`, `PB_Start_CIP`), and no stop commands are active. It also includes conditions to ensure that at least two barrels are configured before starting. *)
 _Bit := (PB3091 OR STR_SCR OR PB_Start_CIP)
 		 AND NOT PB3092 AND NOT M00285 AND NOT PB_Stop_CIP AND NOT STP_SCR;
 
@@ -196,10 +196,9 @@ IF _Bit AND ((CFG_BRL1 AND CFG_BRL2)
 	BR_END := FALSE;
 	BRL_ALR := FALSE;
 END_IF;
-    
-(* Rung 25: Barrel end CIP *)
 
-IF (PB3092 OR STP_SCR OR M00285 OR PB_Stop_CIP;) 
+(* Rung 25 & 27: These rungs handle the stopping conditions for the barrel CIP. The sequence is terminated (`BR_END` is set) if a stop command is received from a physical button (`PB3092`) or the HMI (`STP_SCR`, `PB_Stop_CIP`), or if a barrel alarm (`BRL_ALR`) is active. *)
+IF (PB3092 OR STP_SCR OR M00285 OR PB_Stop_CIP;)
     AND (NOT PB3091 AND NOT STR_SCR AND NOT PB_Start_CIP) THEN
     BR_END := TRUE;
     BR_WORK := FALSE;
