@@ -1,0 +1,128 @@
+(*!
+@purpose
+This program (`E_DI.txt`) is the digital input mapping and latching layer for the "CIP E" process. It is a direct functional parallel to `D_DI.txt`. Its sole responsibility is to read the state of the physical digital input terminals (`%I` addresses) and copy them to corresponding internal memory bits (`%M` addresses).
+
+This abstraction is a fundamental PLC programming practice that decouples the control logic from the physical hardware. It enhances maintainability, simplifies debugging, and allows for easier simulation of inputs.
+
+@inputs
+- `I00297` through `I00310` (BOOL): Physical digital input channels for the CIP E process.
+    - Valve position feedback switches (`*_O` for open, `*_C` for closed).
+    - Pump run status (`P4269_Run`) and motor overload (`P4269_OL`).
+    - Flow switch status (`FS_207`).
+    - Pulse signals from the flow meter (`FIT_207_PLS`).
+
+@outputs
+- A series of internal memory flags (`%M` addresses) (BOOL) that mirror the state of the physical inputs. For example:
+    - `XV4208_O` is TRUE if input `I00297` is TRUE.
+    - `P4269_Run` is TRUE if input `I00309` is TRUE.
+These internal flags are then consumed by the rest of the CIP E control logic.
+
+@notes
+- This code is for a GE/Emerson RX3i PLC and is written in Structured Text (ST).
+- The original comments are in Hebrew, confirming the purpose of each input (e.g., "פידבק שסתום פתוח" means "Valve Open Feedback").
+- The program consists only of direct, one-to-one assignments, reflecting its role as a simple mapping utility.
+*)
+VAR_GLOBAL
+	I00297 AT %I00297 : BOOL; (*כניסה דיגיטלית*)
+	I00298 AT %I00298 : BOOL; (*כניסה דיגיטלית*)
+	I00299 AT %I00299 : BOOL; (*כניסה דיגיטלית*)
+	I00300 AT %I00300 : BOOL; (*כניסה דיגיטלית*)
+	I00301 AT %I00301 : BOOL; (*כניסה דיגיטלית*)
+	I00302 AT %I00302 : BOOL; (*כניסה דיגיטלית*)
+	I00303 AT %I00303 : BOOL; (*כניסה דיגיטלית*)
+	I00304 AT %I00304 : BOOL; (*כניסה דיגיטלית*)
+	I00305 AT %I00305 : BOOL; (*כניסה דיגיטלית*)
+	I00306 AT %I00306 : BOOL; (*כניסה דיגיטלית*)
+	I00307 AT %I00307 : BOOL; (*כניסה דיגיטלית*)
+	I00308 AT %I00308 : BOOL; (*כניסה דיגיטלית*)
+	I00309 AT %I00309 : BOOL; (*כניסה דיגיטלית*)
+	I00310 AT %I00310 : BOOL; (*כניסה דיגיטלית*)
+	XV4208_O AT %M01541 : BOOL; (*פידבק שסתום פתוח*)
+	XV4206_O AT %M01542 : BOOL; (*פידבק שסתום פתוח*)
+	XV4202_O AT %M01543 : BOOL; (*פידבק שסתום פתוח*)
+	XV4211_O AT %M01545 : BOOL; (*פידבק שסתום פתוח*)
+	XV4225_O AT %M01546 : BOOL; (*פידבק שסתום פתוח*)
+	XV4236_O AT %M01547 : BOOL; (*פידבק שסתום פתוח*)
+	XV4234_O AT %M01548 : BOOL; (*פידבק שסתום פתוח*)
+	XV4231_O AT %M01550 : BOOL; (*פידבק שסתום פתוח*)
+	XV4281_O AT %M01551 : BOOL; (*פידבק שסתום פתוח*)
+	XV4281_C AT %M01571 : BOOL; (*פידבק שסתום סגור*)
+	FS_207 AT %M01553 : BOOL; (*מתג זרימה*)
+	P4269_OL AT %M01554 : BOOL; (*מגע יבש ממסר מגן מנוע*)
+	P4269_Run AT %M01555 : BOOL; (*פידבק הפעלת מנוע*)
+	FIT_207_PLS AT %M01556 : BOOL; (*פולסים ממד ספיקה*)
+END_VAR
+
+(* Rung 1: %M1500-1532 *)
+
+(* Rung 2: --------------------- *)
+
+(* Rung 3: XV4208_O *)
+
+(* Rung 4: פידבק שסתום פתוח *)
+XV4208_O := I00297;
+
+(* Rung 5: XV4206_O *)
+
+(* Rung 6: פידבק שסתום פתוח *)
+XV4206_O := I00298;
+
+(* Rung 7: XV4202_O *)
+
+(* Rung 8: פידבק שסתום פתוח *)
+XV4202_O := I00299;
+
+(* Rung 9: XV4211_O *)
+
+(* Rung 10: פידבק שסתום פתוח *)
+XV4211_O := I00300;
+
+(* Rung 11: XV4225_O *)
+
+(* Rung 12: פידבק שסתום פתוח *)
+XV4225_O := I00301;
+
+(* Rung 13: XV4236_O *)
+
+(* Rung 14: פידבק שסתום פתוח *)
+XV4236_O := I00302;
+
+(* Rung 15: XV4234_O *)
+
+(* Rung 16: פידבק שסתום פתוח *)
+XV4234_O := I00303;
+
+(* Rung 17: XV4231_O *)
+
+(* Rung 18: פידבק שסתום פתוח *)
+XV4231_O := I00304;
+
+(* Rung 19: XV4281_O *)
+
+(* Rung 20: פידבק שסתום פתוח *)
+XV4281_O := I00305;
+
+(* Rung 21: XV4281_C *)
+
+(* Rung 22: פידבק שסתום סגור *)
+XV4281_C := I00306;
+
+(* Rung 23: FS_206 *)
+
+(* Rung 24: מתג זרימה *)
+FS_207 := I00307;
+
+(* Rung 25: P4269_OL *)
+
+(* Rung 26: מגע יבש ממסר מגן מנוע *)
+P4269_OL := I00308;
+
+(* Rung 27: P4269_Run *)
+
+(* Rung 28: פידבק הפעלת מנוע *)
+P4269_Run := I00309;
+
+(* Rung 29: FIT_207  Pulse *)
+
+(* Rung 30: פולסים ממד ספיקה *)
+FIT_207_PLS := I00310;

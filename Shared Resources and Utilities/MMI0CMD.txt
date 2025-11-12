@@ -1,0 +1,183 @@
+(*
+* @purpose: Acts as the primary command interpreter for the Cimplicity SCADA/MMI system.
+*           It reads a command word (MMICMD) from the HMI, detects new commands, and dispatches
+*           them to the appropriate sub-program (MMIACMD, MMIBCMD, MMICCMD, etc.) for execution.
+*           This block serves as the main entry point for all operator actions initiated from the HMI.
+* @platform: GE/Emerson RX3i PLC
+* @language: Structured Text (ST)
+*
+* @inputs:
+*   R08036 (ARRAY[0..64] OF WORD): The raw data block received from the HMI.
+*   MMICMD (%R00536[62]) (INT): A specific word from the processed HMI data block that contains the command code.
+*
+* @outputs:
+*   R00536 (ARRAY[0..64] OF WORD): The processed data block that is used by the PLC logic.
+*   BR2USES (%M00189) (BOOL): A flag that is set/reset based on specific HMI commands (555 or 777),
+*                             controlling whether the Barrel CIP process uses soda.
+*   NEW_CMD (%T00210) (BOOL): A momentary flag that pulses when a new, different MMICMD is received.
+*
+* @notes: This program uses a latching mechanism with L_MMICD to detect a change in the MMICMD value.
+*         When a new command is detected, it calls a series of other programs (CMD0HND, MMIXCMD, etc.)
+*         to handle the specific action requested by the operator.
+*)
+VAR_GLOBAL
+    (* Always OFF *)
+    #ALW_OFF AT %S00008 : BOOL;
+
+    (* Always ON *)
+    #ALW_ON AT %S00007 : BOOL;
+
+    (* Barrel CIP uses soda on stage 2. *)
+    BR2USES AT %M00189 : BOOL;
+
+    (* Local copy of MMI command *)
+    L_MMICD AT %R00133 : INT;
+
+    (* HMI CMD EQ 555 *)
+    M00206 AT %M00206 : BOOL;
+
+    (* HMI CMD EQ 777 *)
+    M00207 AT %M00207 : BOOL;
+
+    M00299 AT %M00299 : BOOL;
+
+    (* New MMI Command *)
+    NEW_CMD AT %T00210 : BOOL;
+
+    (* Base array for MMI commands. Element [62] is aliased as MMICMD: MMI command(hnds,b4activ,etc) *)
+    R00536 AT %R00536 : ARRAY[0..64] OF WORD;
+
+    R00610 AT %R00610 : INT;
+
+    R08036 AT %R08036 : ARRAY[0..64] OF WORD;
+	MMICMD AT %R00536[62] : INT;
+END_VAR
+
+(* Rung 1 *)
+IF (NOT #ALW_OFF) AND #ALW_ON AND (R08036[5] <> 0) THEN
+	R00536[0] := R08036[0];
+	R00537[1] := R08037[1];
+	R00538[2] := R08038[2];
+	R00539[3] := R08039[3];
+	R00540[4] := R08040[4];
+	R00541[5] := R08041[5];
+	R00542[6] := R08042[6];
+	R00543[7] := R08043[7];
+	R00544[8] := R08044[8];
+	R00545[9] := R08045[9];
+	R00546[10] := R08046[10];
+	R00547[11] := R08047[11];
+	R00548[12] := R08048[12];
+	R00549[13] := R08049[13];
+	R00550[14] := R08050[14];
+	R00551[15] := R08051[15];
+	R00552[16] := R08052[16];
+	R00553[17] := R08053[17];
+	R00554[18] := R08054[18];
+	R00555[19] := R08055[19];
+	R00556[20] := R08056[20];
+	R00557[21] := R08057[21];
+	R00558[22] := R08058[22];
+	R00559[23] := R08059[23];
+	R00560[24] := R08060[24];
+	R00561[25] := R08061[25];
+	R00562[26] := R08062[26];
+	R00563[27] := R08063[27];
+	R00564[28] := R08064[28];
+	R00565[29] := R08065[29];
+	R00566[30] := R08066[30];
+	R00567[31] := R08067[31];
+	R00568[32] := R08068[32];
+	R00569[33] := R08069[33];
+	R00570[34] := R08070[34];
+	R00571[35] := R08071[35];
+	R00572[36] := R08072[36];
+	R00573[37] := R08073[37];
+	R00574[38] := R08074[38];
+	R00575[39] := R08075[39];
+	R00576[40] := R08076[40];
+	R00577[41] := R08077[41];
+	R00578[42] := R08078[42];
+	R00579[43] := R08079[43];
+	R00580[44] := R08080[44];
+	R00581[45] := R08081[45];
+	R00582[46] := R08082[46];
+	R00583[47] := R08083[47];
+	R00584[48] := R08084[48];
+	R00585[49] := R08085[49];
+	R00586[50] := R08086[50];
+	R00587[51] := R08087[51];
+	R00588[52] := R08088[52];
+	R00589[53] := R08089[53];
+	R00590[54] := R08090[54];
+	R00591[55] := R08091[55];
+	R00592[56] := R08092[56];
+	R00593[57] := R08093[57];
+	R00594[58] := R08094[58];
+	R00595[59] := R08095[59];
+	R00596[60] := R08096[60];
+	R00597[61] := R08097[61];
+	R00598[62] := R08098[62];
+	R00599[63] := R08099[63];
+END_IF;
+
+(* Rung 2: COMMENT0 *)
+
+(* Rung 3: HMI CMD EQ 555 *)
+M00206 := #ALW_ON AND #ALW_ON AND (R00536[5] = 555);
+
+(* Rung 4: COMMENT1 *)
+
+(* Rung 5: HMI CMD EQ 777 *)
+M00207 := #ALW_ON AND (NOT M00299) AND (R00536[5] = 777);
+
+(* Rung 6: Barrel CIP uses soda on stage 2. *)
+IF (#ALW_OFF AND (NOT M00206)) OR (#ALW_ON AND M00207) THEN
+    BR2USES := TRUE;
+END_IF;
+
+(* Rung 7: Barrel CIP uses soda on stage 2. *)
+IF (M00299 AND (NOT M00207)) OR (#ALW_ON AND M00206) AND NOT M00207 THEN
+    BR2USES := FALSE;
+END_IF;
+
+(* Rung 8 *)
+IF #ALW_ON AND M00207 THEN
+    R00610 := 20;
+END_IF;
+
+(* Rung 9 *)
+IF #ALW_ON AND M00206 THEN
+    R00610 := 6;
+END_IF;
+
+(* Rung 10: New MMI Command *)
+NEW_CMD := (MMICMD <> L_MMICD);
+IF NEW_CMD THEN
+    L_MMICD := MMICMD;
+END_IF;
+
+(* Rung 11: Call CMD0HND if new command is in range [1000..4000] *)
+IF NEW_CMD AND (MMICMD >= 1000 AND MMICMD <= 4000) THEN
+    CMD0HND();
+END_IF;
+
+(* Rung 12: Call MMIXCMD for new command *)
+IF NEW_CMD THEN
+    MMIXCMD();
+END_IF;
+
+(* Rung 13: Call MMIACMD for new command *)
+IF NEW_CMD THEN
+    MMIACMD();
+END_IF;
+
+(* Rung 14: Call MMIBCMD for new command *)
+IF NEW_CMD THEN
+    MMIBCMD();
+END_IF;
+
+(* Rung 15: Call MMICCMD for new command *)
+IF NEW_CMD THEN
+    MMICCMD();
+END_IF;

@@ -1,0 +1,305 @@
+(*!
+@purpose
+This program (`E_BITAL.txt`) is the step decoder for the "CIP E" sequential process. It is a direct parallel to `D_BITAL.txt` and forms the core of the state machine for the E-line. Its sole function is to take an integer representing the current step number and convert it into a unique boolean flag.
+
+The program's operation is as follows:
+1.  At the start of each scan, all `E_StepX` boolean flags are reset to FALSE.
+2.  It reads the current step number from the `E_Steper` integer.
+3.  Using a `CASE` statement, it finds the matching step number and sets the corresponding `E_StepX` flag to TRUE.
+4.  For the active step, it also loads the required presets for timers (`MonitorPre_E`) or volume counters (`FIT207_Pre`) which are used by the main sequencer (`E_STRCT.txt`) to determine when to advance to the next step.
+
+@inputs
+- `E_Steper` (%R09251) (INT): The integer that holds the current step number of the CIP E sequence.
+- `VolSP_E` (INT), `Rx5_TimeSP_R30` (INT): Setpoint registers containing the time and volume presets for various cleaning phases.
+
+@outputs
+- `E_Step0` - `E_Step91` (BOOL): A series of boolean flags where only one is TRUE, indicating the currently active step.
+- `MonitorPre_E` (%R09255) (INT): A register loaded with the time preset for the current step's timer.
+- `FIT207_Pre` (%R09252) (INT): A register loaded with the target volume preset for the current step.
+
+@notes
+- This code is for a GE/Emerson RX3i PLC and is written in Structured Text (ST).
+- The original comments are in Hebrew, with "שלב" meaning "Step". The comments and step numbering clearly delineate the major phases of the CIP process: Pre-Rinse (steps 1-9), Caustic wash (20-30), Intermediate Rinse (40-49), Acid wash (60-69), and Post-Rinse (80-91).
+- This step decoder design is a classic and robust state machine implementation that separates the program's state (this file) from its actions (`E_GNACT.txt`) and transitions (`E_STRCT.txt`).
+*)
+VAR_GLOBAL
+	E_Steper AT %R09251 : INT; (*מונה שלבים CIP_E*)
+	FIT207_Pre AT %R09252 : INT; (*מונה לסגירת מים CIP_E*)
+	MonitorPre_E AT %R09255 : INT; (*מוניטור לסבוב יציאה ממסר*)
+	VolSP_E AT %R09281 : INT; (*ערך רצוי לכמות מים בשטיפה CIP_E*)
+	E_Step0 AT %M01400 : BOOL; (*שלב 0*)
+	E_Step1 AT %M01401 : BOOL; (*שלב 1*)
+	E_Step2 AT %M01402 : BOOL; (*שלב 2*)
+	E_Step3 AT %M01403 : BOOL; (*שלב 3*)
+	E_Step8 AT %M01408 : BOOL; (*שלב 8*)
+	E_Step9 AT %M01409 : BOOL; (*שלב 9*)
+	E_Step20 AT %M01420 : BOOL; (*שלב 20*)
+	E_Step21 AT %M01421 : BOOL; (*שלב 21*)
+	E_Step22 AT %M01422 : BOOL; (*שלב 22*)
+	E_Step23 AT %M01423 : BOOL; (*שלב 23*)
+	E_Step24 AT %M01424 : BOOL; (*שלב 24*)
+	E_Step28 AT %M01428 : BOOL; (*שלב 28*)
+	E_Step29 AT %M01429 : BOOL; (*שלב 29*)
+	E_Step30 AT %M01430 : BOOL; (*שלב 30*)
+	E_Step40 AT %M01440 : BOOL; (*שלב 40*)
+	E_Step41 AT %M01441 : BOOL; (*שלב 41*)
+	E_Step42 AT %M01442 : BOOL; (*שלב 42*)
+	E_Step43 AT %M01443 : BOOL; (*שלב 43*)
+	E_Step44 AT %M01444 : BOOL; (*שלב 44*)
+	E_Step48 AT %M01448 : BOOL; (*שלב 48*)
+	E_Step49 AT %M01449 : BOOL; (*שלב 49*)
+	E_Step60 AT %M01460 : BOOL; (*שלב 60*)
+	E_Step61 AT %M01461 : BOOL; (*שלב 61*)
+	E_Step62 AT %M01462 : BOOL; (*שלב 62*)
+	E_Step63 AT %M01463 : BOOL; (*שלב 63*)
+	E_Step64 AT %M01464 : BOOL; (*שלב 64*)
+	E_Step68 AT %M01468 : BOOL; (*שלב 68*)
+	E_Step69 AT %M01469 : BOOL; (*שלב 69*)
+	E_Step80 AT %M01480 : BOOL; (*שלב 80*)
+	E_Step81 AT %M01481 : BOOL; (*שלב 81*)
+	E_Step82 AT %M01482 : BOOL; (*שלב 82*)
+	E_Step83 AT %M01483 : BOOL; (*שלב 83*)
+	E_Step84 AT %M01484 : BOOL; (*שלב 84*)
+	E_Step88 AT %M01488 : BOOL; (*שלב 88*)
+	E_Step89 AT %M01489 : BOOL; (*שלב 89*)
+	E_Step90 AT %M01490 : BOOL; (*שלב 90*)
+	E_Step91 AT %M01491 : BOOL; (*שלב 91*)
+	Rx5_TimeSP_R30 AT %R09805 : INT; (*זמן רצוי לסחרור*)
+END_VAR
+
+// Reset all step outputs before evaluating the current state
+E_Step0 := FALSE;
+E_Step1 := FALSE;
+E_Step2 := FALSE;
+E_Step3 := FALSE;
+E_Step8 := FALSE;
+E_Step9 := FALSE;
+E_Step20 := FALSE;
+E_Step21 := FALSE;
+E_Step22 := FALSE;
+E_Step23 := FALSE;
+E_Step24 := FALSE;
+E_Step28 := FALSE;
+E_Step29 := FALSE;
+E_Step30 := FALSE;
+E_Step40 := FALSE;
+E_Step41 := FALSE;
+E_Step42 := FALSE;
+E_Step43 := FALSE;
+E_Step44 := FALSE;
+E_Step48 := FALSE;
+E_Step49 := FALSE;
+E_Step60 := FALSE;
+E_Step61 := FALSE;
+E_Step62 := FALSE;
+E_Step63 := FALSE;
+E_Step64 := FALSE;
+E_Step68 := FALSE;
+E_Step69 := FALSE;
+E_Step80 := FALSE;
+E_Step81 := FALSE;
+E_Step82 := FALSE;
+E_Step83 := FALSE;
+E_Step84 := FALSE;
+E_Step88 := FALSE;
+E_Step89 := FALSE;
+E_Step90 := FALSE;
+E_Step91 := FALSE;
+
+CASE E_Steper OF
+	(* Rung 2: 0 *)
+	0:
+		MonitorPre_E := 0;
+		E_Step0 := TRUE;
+
+	(* Rung 3: 1        ************************ PreRinse *)
+	1:
+		MonitorPre_E := 60;
+		FIT207_Pre := VolSP_E;
+		E_Step1 := TRUE;
+
+	(* Rung 6: 2 *)
+	2:
+		MonitorPre_E := 0;
+		E_Step2 := TRUE;
+
+	(* Rung 8: 3 *)
+	3:
+		MonitorPre_E := 0;
+		E_Step3 := TRUE;
+
+	(* Rung 10: 8 *)
+	8:
+		MonitorPre_E := 60;
+		E_Step8 := TRUE;
+
+	(* Rung 12: 9 *)
+	9:
+		MonitorPre_E := Rx5_TimeSP_R30;
+		E_Step9 := TRUE;
+
+	(* Rung 14: 20    ************************ Caustic *)
+	20:
+		MonitorPre_E := 20;
+		E_Step20 := TRUE;
+
+	(* Rung 16: 21 *)
+	21:
+		MonitorPre_E := 60;
+		FIT207_Pre := VolSP_E;
+		E_Step21 := TRUE;
+
+	(* Rung 18: 22 *)
+	22:
+		MonitorPre_E := 22;
+		E_Step22 := TRUE;
+
+	(* Rung 20: 23 *)
+	23:
+		MonitorPre_E := 23;
+		E_Step23 := TRUE;
+
+	(* Rung 22: COMMENT10 *)
+	24:
+		MonitorPre_E := 24;
+		E_Step24 := TRUE;
+
+	(* Rung 24: 28 *)
+	28:
+		MonitorPre_E := 30;
+		E_Step28 := TRUE;
+
+	(* Rung 26: 29 *)
+	29:
+		MonitorPre_E := 29;
+		E_Step29 := TRUE;
+
+	(* Rung 28: 30 *)
+	30:
+		MonitorPre_E := 2;
+		E_Step30 := TRUE;
+
+	(* Rung 30: 40      ************************ Intermidiate Rinse *)
+	40:
+		MonitorPre_E := 40;
+		E_Step40 := TRUE;
+
+	(* Rung 32: 41 *)
+	41:
+		MonitorPre_E := 60;
+		FIT207_Pre := VolSP_E;
+		E_Step41 := TRUE;
+
+	(* Rung 34: 42 *)
+	42:
+		MonitorPre_E := 42;
+		E_Step42 := TRUE;
+
+	(* Rung 36: 43 *)
+	43:
+		MonitorPre_E := 43;
+		E_Step43 := TRUE;
+
+	(* Rung 38: COMMENT18 *)
+	44:
+		MonitorPre_E := 44;
+		E_Step44 := TRUE;
+
+	(* Rung 40: 48 *)
+	48:
+		MonitorPre_E := 60;
+		E_Step48 := TRUE;
+
+	(* Rung 42: 49 *)
+	49:
+		MonitorPre_E := Rx5_TimeSP_R30;
+		E_Step49 := TRUE;
+
+	(* Rung 44: 60      ************************ Acid *)
+	60:
+		MonitorPre_E := 60;
+		E_Step60 := TRUE;
+
+	(* Rung 46: 61 *)
+	61:
+		MonitorPre_E := 60;
+		FIT207_Pre := VolSP_E;
+		E_Step61 := TRUE;
+
+
+
+	(* Rung 48: 62 *)
+	62:
+		MonitorPre_E := 62;
+		E_Step62 := TRUE;
+
+	(* Rung 50: 63 *)
+	63:
+		MonitorPre_E := 63;
+		E_Step63 := TRUE;
+
+	(* Rung 52: COMMENT25 *)
+	64:
+		MonitorPre_E := 64;
+		E_Step64 := TRUE;
+
+	(* Rung 54: 68 *)
+	68:
+		MonitorPre_E := 30;
+		E_Step68 := TRUE;
+
+	(* Rung 56: 69 *)
+	69:
+		MonitorPre_E := Rx5_TimeSP_R30;
+		E_Step69 := TRUE;
+
+	(* Rung 58: 80    ************************ Post Rinse *)
+	80:
+		MonitorPre_E := 80;
+		E_Step80 := TRUE;
+
+	(* Rung 60: 81 *)
+	81:
+		MonitorPre_E := 60;
+		FIT207_Pre := VolSP_E;
+		E_Step81 := TRUE;
+
+	(* Rung 62: 82 *)
+	82:
+		MonitorPre_E := 82;
+		E_Step82 := TRUE;
+
+	(* Rung 64: 83 *)
+	83:
+		MonitorPre_E := 83;
+		E_Step83 := TRUE;
+
+	(* Rung 66: 84 *)
+	84:
+		MonitorPre_E := 84;
+		E_Step84 := TRUE;
+
+	(* Rung 68: 88 *)
+	88:
+		MonitorPre_E := 30;
+		E_Step88 := TRUE;
+
+	(* Rung 70: 89 *)
+	89:
+		MonitorPre_E := Rx5_TimeSP_R30;
+		E_Step89 := TRUE;
+
+	(* Rung 72: 90 *)
+	90:
+		MonitorPre_E := 60;
+		E_Step90 := TRUE;
+
+	(* Rung 74: 91 *)
+	91:
+		MonitorPre_E := 91;
+		E_Step91 := TRUE;
+
+ELSE
+	(* Default case for undefined steps *)
+	// All E_Step coils are already FALSE from the reset block above.
+END_CASE;

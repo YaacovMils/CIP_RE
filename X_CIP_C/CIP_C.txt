@@ -1,0 +1,31 @@
+(*!
+@purpose
+This program (`CIP_C.txt`) is the master organizational routine for the Cleaning-In-Place (CIP) C-line process. Following the established pattern of `CIP_A.txt` and `CIP_B.txt`, this program contains no direct process logic. Its sole purpose is to ensure the sub-programs for Line C are executed in the correct, deterministic order during each PLC scan.
+
+The execution sequence is as follows:
+1.  `C_CMD()`: The command handler for Line C is called to process any new operator or system commands.
+2.  `C_CIP()`: The core process logic for Line C is executed, which controls the valves and pumps based on the commands.
+3.  `C_U_ST()`: The status update routine is called to assemble the final status word for HMI/SCADA display.
+
+@inputs
+- This program has no direct inputs; it calls subroutines that interact with global variables.
+
+@outputs
+- This program has no direct outputs; it calls subroutines that interact with global variables.
+
+@notes
+- This code is for a GE/Emerson RX3i PLC and is written in Structured Text (ST).
+- This file is another clear example of the templated design approach used in this project, ensuring consistency across the different CIP lines.
+- Enforcing the `CMD -> LOGIC -> STATUS` execution order via a master routine like this is a robust design pattern that prevents race conditions and ensures predictable system behavior from one scan to the next.
+*)
+VAR_GLOBAL
+END_VAR
+
+(* Rung 1 *)
+C_CMD();
+
+(* Rung 2 *)
+C_CIP();
+
+(* Rung 3 *)
+C_U_ST();

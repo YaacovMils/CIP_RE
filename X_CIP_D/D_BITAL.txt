@@ -1,0 +1,1491 @@
+(*!
+@purpose
+This program (`D_BITAL.txt`) acts as a step decoder for the complex, multi-step sequential process of CIP Line D. It forms the core of a state machine by translating a single integer, representing the current step number, into a unique boolean flag that indicates the active step.
+
+The program operates as follows:
+1.  At the beginning of each PLC scan, it resets all `D_StepX` boolean flags to FALSE.
+2.  It then reads the value of an integer variable, `D_Steper`, which holds the current step number of the sequence.
+3.  Using a `CASE` statement, it executes only the logic corresponding to the value of `D_Steper`.
+4.  For the active step, it sets the corresponding `D_StepX` flag to TRUE. This flag is then used by other programs (like `D_GNACT.txt`) to control the specific pumps and valves required for that step.
+5.  In many steps, it also loads preset values for timers (`MonitorPre`) or volume counters (`FIT107_Pre`) that the main sequencer logic (`D_STRCT.txt`) will use to determine when it's time to advance to the next step.
+
+@inputs
+- `D_Steper` (%R09101): The integer representing the current step number of the Line D CIP sequence. This value is controlled by the main sequencer logic in `D_STRCT.txt`.
+- Various setpoint registers (`SP_Fill_Vol`, `R09110`, etc.) which contain the time or volume presets for different phases of the cleaning cycle.
+
+@outputs
+- `D_Step0` - `D_Step100` (%M00400 - %M00499): A series of 101 boolean flags. In any given scan, exactly one of these flags will be TRUE, indicating the currently active step in the sequence.
+- `MonitorPre` (%R09105): A register that is loaded with the time preset (in seconds) for the current step's monitoring timer.
+- `FIT107_Pre` (%R09132): A register that is loaded with the target volume preset for filling steps.
+
+@notes
+- This code is for a GE/Emerson RX3i PLC and is written in Structured Text (ST).
+- This "step decoder" pattern is a very common and effective way to implement complex state machines in a PLC. It cleanly separates the "state" (which step is active) from the "action" (what to do in that state, handled in `D_GNACT.txt`) and the "transition" (when to move to the next state, handled in `D_STRCT.txt`).
+- The original comments are in Hebrew and describe the different phases of a standard CIP sequence: Pre-rinse, Caustic (Soda) wash, Intermediate rinse, Acid wash, and Final rinse.
+*)
+VAR_GLOBAL
+	D_Step0 AT %M00400 : BOOL; (* Line D *)
+	D_Step1 AT %M00401 : BOOL; (* Line D *)
+	D_Step10 AT %M00410 : BOOL; (* ניקוי 10 *)
+	D_Step100 AT %M00489 : BOOL; (* סיום תהליך עיקור *)
+	D_Step11 AT %M00411 : BOOL; (* ניקוי 11 *)
+	D_Step12 AT %M00412 : BOOL; (* ניקוי 12 *)
+	D_Step13 AT %M00413 : BOOL; (* ניקוי 13 *)
+	D_Step14 AT %M00414 : BOOL; (* ניקוי 14 *)
+	D_Step15 AT %M00415 : BOOL; (* ניקוי 15 *)
+	D_Step16 AT %M00416 : BOOL; (* ניקוי 16 *)
+	D_Step17 AT %M00417 : BOOL; (* ניקוי 17 *)
+	D_Step18 AT %M00418 : BOOL; (* ניקוי 18 *)
+	D_Step19 AT %M00419 : BOOL; (* ניקוי 19 *)
+	D_Step2 AT %M00402 : BOOL; (* Line D *)
+	D_Step20 AT %M00420 : BOOL; (* סודה 0 *)
+	D_Step21 AT %M00421 : BOOL; (* Line D *)
+	D_Step22 AT %M00422 : BOOL; (* סודה ריקון *)
+	D_Step23 AT %M00423 : BOOL; (* Line D *)
+	D_Step24 AT %M00424 : BOOL; (* Line D *)
+	D_Step25 AT %M00425 : BOOL; (* סודה 5 *)
+	D_Step26 AT %M00426 : BOOL; (* סודה 6 *)
+	D_Step27 AT %M00427 : BOOL; (* סודה 7 *)
+	D_Step28 AT %M00428 : BOOL; (* Line D *)
+	D_Step29 AT %M00429 : BOOL; (* Line D *)
+	D_Step3 AT %M00403 : BOOL; (* Line D *)
+	D_Step30 AT %M00430 : BOOL; (* Line D *)
+	D_Step31 AT %M00431 : BOOL; (* סודה 11 *)
+	D_Step32 AT %M00432 : BOOL; (* סודה 12 *)
+	D_Step33 AT %M00433 : BOOL; (* סודה 13 *)
+	D_Step34 AT %M00434 : BOOL; (* סודה 14 *)
+	D_Step35 AT %M00435 : BOOL; (* סודה 15 *)
+	D_Step36 AT %M00436 : BOOL; (* סודה 16 *)
+	D_Step37 AT %M00437 : BOOL; (* סודה 17 *)
+	D_Step38 AT %M00438 : BOOL; (* סודה 18 *)
+	D_Step39 AT %M00439 : BOOL; (* סודה 19 *)
+	D_Step4 AT %M00404 : BOOL; (* שטיפה ראשונה המתנה למוליכות *)
+	D_Step40 AT %M00440 : BOOL; (* שטיפת ביניים 0 *)
+	D_Step41 AT %M00441 : BOOL; (* Line D *)
+	D_Step42 AT %M00442 : BOOL; (* Line D *)
+	D_Step43 AT %M00443 : BOOL; (* Line D *)
+	D_Step44 AT %M00444 : BOOL; (* Line D *)
+	D_Step45 AT %M00445 : BOOL; (* שטיפת ביניים 5 *)
+	D_Step46 AT %M00446 : BOOL; (* שטיפת ביניים 6 *)
+	D_Step47 AT %M00447 : BOOL; (* שטיפת ביניים 7 *)
+	D_Step48 AT %M00448 : BOOL; (* Line D *)
+	D_Step49 AT %M00449 : BOOL; (* שטיפת ביניים פליפים *)
+	D_Step5 AT %M00405 : BOOL; (* ניקוי 5 *)
+	D_Step50 AT %M00450 : BOOL; (* שטיפת ביניים 10 *)
+	D_Step51 AT %M00451 : BOOL; (* שטיפת ביניים 11 *)
+	D_Step52 AT %M00452 : BOOL; (* שטיפת ביניים 12 *)
+	D_Step53 AT %M00453 : BOOL; (* שטיפת ביניים 13 *)
+	D_Step54 AT %M00454 : BOOL; (* שטיפת ביניים 14 *)
+	D_Step55 AT %M00455 : BOOL; (* שטיפת ביניים 15 *)
+	D_Step56 AT %M00456 : BOOL; (* שטיפת ביניים 16 *)
+	D_Step57 AT %M00457 : BOOL; (* שטיפת ביניים 17 *)
+	D_Step58 AT %M00458 : BOOL; (* שטיפת ביניים 18 *)
+	D_Step59 AT %M00459 : BOOL; (* שטיפת ביניים 19 *)
+	D_Step6 AT %M00406 : BOOL; (* ניקוי 6 *)
+	D_Step60 AT %M00460 : BOOL; (* חומצה 0 *)
+	D_Step61 AT %M00461 : BOOL; (* Line D *)
+	D_Step62 AT %M00462 : BOOL; (* Line D *)
+	D_Step63 AT %M00463 : BOOL; (* Line D *)
+	D_Step64 AT %M00464 : BOOL; (* Line D *)
+	D_Step65 AT %M00465 : BOOL; (* חומצה 5 *)
+	D_Step66 AT %M00466 : BOOL; (* חומצה 6 *)
+	D_Step67 AT %M00467 : BOOL; (* חומצה 7 *)
+	D_Step68 AT %M00468 : BOOL; (* Line D *)
+	D_Step69 AT %M00469 : BOOL; (* Line D *)
+	D_Step7 AT %M00407 : BOOL; (* ניקוי 7 *)
+	D_Step70 AT %M00470 : BOOL; (* חומצה 10 *)
+	D_Step71 AT %M00471 : BOOL; (* חומצה 11 *)
+	D_Step72 AT %M00472 : BOOL; (* חומצה 12 *)
+	D_Step73 AT %M00473 : BOOL; (* חומצה 13 *)
+	D_Step74 AT %M00474 : BOOL; (* חומצה 14 *)
+	D_Step75 AT %M00475 : BOOL; (* חומצה 15 *)
+	D_Step76 AT %M00476 : BOOL; (* חומצה 16 *)
+	D_Step77 AT %M00477 : BOOL; (* חומצה 17 *)
+	D_Step78 AT %M00478 : BOOL; (* חומצה 18 *)
+	D_Step79 AT %M00479 : BOOL; (* חומצה 19 *)
+	D_Step8 AT %M00408 : BOOL; (* Line D *)
+	D_Step80 AT %M00480 : BOOL; (* שטיפה אחרונה 0 *)
+	D_Step81 AT %M00481 : BOOL; (* Line D *)
+	D_Step82 AT %M00482 : BOOL; (* Line D *)
+	D_Step83 AT %M00483 : BOOL; (* Line D *)
+	D_Step84 AT %M00484 : BOOL; (* Line D *)
+	D_Step85 AT %M00485 : BOOL; (* שטיפה אחרונה 5 *)
+	D_Step86 AT %M00486 : BOOL; (* שטיפה אחרונה 6 *)
+	D_Step87 AT %M00487 : BOOL; (* שטיפה אחרונה 7 *)
+	D_Step88 AT %M00488 : BOOL; (* Line D *)
+	D_Step9 AT %M00409 : BOOL; (* Line D *)
+	D_Step90 AT %M00490 : BOOL; (* Line D *)
+	D_Step91 AT %M00491 : BOOL; (* שטיפה אחרונה 11 *)
+	D_Step92 AT %M00492 : BOOL; (* שטיפה אחרונה 12 *)
+	D_Step93 AT %M00493 : BOOL; (* שטיפה אחרונה 13 *)
+	D_Step94 AT %M00494 : BOOL; (* שטיפה אחרונה 14 *)
+	D_Step95 AT %M00495 : BOOL; (* שטיפה אחרונה 15 *)
+	D_Step96 AT %M00496 : BOOL; (* שטיפה אחרונה 16 *)
+	D_Step97 AT %M00497 : BOOL; (* שטיפה אחרונה 17 *)
+	D_Step98 AT %M00498 : BOOL; (* שטיפה אחרונה 18 *)
+	D_Step99 AT %M00499 : BOOL; (* שטיפה אחרונה 19 *)
+	D_Steper AT %R09101 : INT; (* Line D Struct *)
+	FIT107_Pre AT %R09132 : INT;
+	MonitorPre AT %R09105 : INT; (* Monitoring Preset Time *)
+	R09110 AT %R09110 : INT; (* SP Pre Rinse_D *)
+	R09111 AT %R09111 : INT; (* SP Coustic_D *)
+	R09112 AT %R09112 : INT; (* SP Interm Rinse_D *)
+	R09113 AT %R09113 : INT; (* SP Acid_D *)
+	R09114 AT %R09114 : INT; (* SP Post Rinse_D *)
+	SP_Fill_Vol AT %R09131 : INT; (* xxx Liters *)
+END_VAR
+
+(* Reset all step coils before evaluation *)
+D_Step0 := FALSE;
+D_Step1 := FALSE;
+D_Step2 := FALSE;
+D_Step3 := FALSE;
+D_Step4 := FALSE;
+D_Step5 := FALSE;
+D_Step6 := FALSE;
+D_Step7 := FALSE;
+D_Step8 := FALSE;
+D_Step9 := FALSE;
+D_Step10 := FALSE;
+D_Step11 := FALSE;
+D_Step12 := FALSE;
+D_Step13 := FALSE;
+D_Step14 := FALSE;
+D_Step15 := FALSE;
+D_Step16 := FALSE;
+D_Step17 := FALSE;
+D_Step18 := FALSE;
+D_Step19 := FALSE;
+D_Step20 := FALSE;
+D_Step21 := FALSE;
+D_Step22 := FALSE;
+D_Step23 := FALSE;
+D_Step24 := FALSE;
+D_Step25 := FALSE;
+D_Step26 := FALSE;
+D_Step27 := FALSE;
+D_Step28 := FALSE;
+D_Step29 := FALSE;
+D_Step30 := FALSE;
+D_Step31 := FALSE;
+D_Step32 := FALSE;
+D_Step33 := FALSE;
+D_Step34 := FALSE;
+D_Step35 := FALSE;
+D_Step36 := FALSE;
+D_Step37 := FALSE;
+D_Step38 := FALSE;
+D_Step39 := FALSE;
+D_Step40 := FALSE;
+D_Step41 := FALSE;
+D_Step42 := FALSE;
+D_Step43 := FALSE;
+D_Step44 := FALSE;
+D_Step45 := FALSE;
+D_Step46 := FALSE;
+D_Step47 := FALSE;
+D_Step48 := FALSE;
+D_Step49 := FALSE;
+D_Step50 := FALSE;
+D_Step51 := FALSE;
+D_Step52 := FALSE;
+D_Step53 := FALSE;
+D_Step54 := FALSE;
+D_Step55 := FALSE;
+D_Step56 := FALSE;
+D_Step57 := FALSE;
+D_Step58 := FALSE;
+D_Step59 := FALSE;
+D_Step60 := FALSE;
+D_Step61 := FALSE;
+D_Step62 := FALSE;
+D_Step63 := FALSE;
+D_Step64 := FALSE;
+D_Step65 := FALSE;
+D_Step66 := FALSE;
+D_Step67 := FALSE;
+D_Step68 := FALSE;
+D_Step69 := FALSE;
+D_Step70 := FALSE;
+D_Step71 := FALSE;
+D_Step72 := FALSE;
+D_Step73 := FALSE;
+D_Step74 := FALSE;
+D_Step75 := FALSE;
+D_Step76 := FALSE;
+D_Step77 := FALSE;
+D_Step78 := FALSE;
+D_Step79 := FALSE;
+D_Step80 := FALSE;
+D_Step81 := FALSE;
+D_Step82 := FALSE;
+D_Step83 := FALSE;
+D_Step84 := FALSE;
+D_Step85 := FALSE;
+D_Step86 := FALSE;
+D_Step87 := FALSE;
+D_Step88 := FALSE;
+D_Step100 := FALSE; (* Corresponds to step 89 *)
+D_Step90 := FALSE;
+D_Step91 := FALSE;
+D_Step92 := FALSE;
+D_Step93 := FALSE;
+D_Step94 := FALSE;
+D_Step95 := FALSE;
+D_Step96 := FALSE;
+D_Step97 := FALSE;
+D_Step98 := FALSE;
+D_Step99 := FALSE;
+
+CASE D_Steper OF
+	(* Rung 1: COMMENT0 *)
+
+	0:
+		(* Rung 2: Line D *)
+		MonitorPre := 0;
+		D_Step0 := TRUE;
+		
+	1:
+		(* Rung 3: COMMENT1 *)
+		(* Rung 4: Line D *)
+		MonitorPre := 60;
+		FIT107_Pre := SP_Fill_Vol;
+		D_Step1 := TRUE;
+
+		
+
+	2:
+		(* Rung 5: COMMENT2 *)
+		(* Rung 6: Line D *)
+		MonitorPre := 2;
+		D_Step2 := TRUE;
+
+	3:
+		(* Rung 7: COMMENT3 *)
+		(* Rung 8: Line D *)
+		MonitorPre := 3;
+		D_Step3 := TRUE;
+
+	4:
+		(* Rung 9: COMMENT4 *)
+		(* Rung 10: שטיפה ראשונה המתנה למוליכות *)
+		MonitorPre := 4;
+		D_Step4 := TRUE;
+
+	
+
+	5:
+		(* Rung 11: COMMENT5 *)
+		(* Rung 12: ניקוי 5 *)
+		MonitorPre := 5;
+		D_Step5 := TRUE;
+
+	6:
+		(* Rung 13: COMMENT6 *)
+		(* Rung 14: ניקוי 6 *)
+		MonitorPre := 6;
+		D_Step6 := TRUE;
+
+	7:
+		(* Rung 15: COMMENT7 *)
+		(* Rung 16: ניקוי 7 *)
+		MonitorPre := 7;
+		D_Step7 := TRUE;
+
+	8:
+		(* Rung 17: COMMENT8 *)
+		(* Rung 18: Line D *)
+		MonitorPre := 60;
+		D_Step8 := TRUE;
+
+	9:
+		(* Rung 19: COMMENT9 *)
+		(* Rung 20: Line D *)
+		MonitorPre := R09110;
+		D_Step9 := TRUE;
+		
+	10:
+		(* Rung 21: COMMENT10 *)
+		(* Rung 22: ניקוי 10 *)
+		MonitorPre := 10;
+		D_Step10 := TRUE;
+
+	11:
+		(* Rung 23: COMMENT11 *)
+		(* Rung 24: ניקוי 11 *)
+		MonitorPre := 11;
+		D_Step11 := TRUE;
+
+	(* Rung 25: COMMENT12 *)
+
+	12:
+		(* Rung 26: ניקוי 12 *)
+		(*
+		 * MOVE_INT Instruction Analysis:
+		 * Source:      Constant value '12'
+		 * Destination: MonitorPre AT %R09105
+		 * Length:      1 Word
+		 *)
+		MonitorPre := 12;
+		D_Step12 := TRUE;
+
+	(* Rung 27: COMMENT13 *)
+
+	13:
+		(* Rung 28: ניקוי 13 *)
+		(*
+		 * MOVE_INT Instruction Analysis:
+		 * Source:      Constant value '13'
+		 * Destination: MonitorPre AT %R09105
+		 * Length:      1 Word
+		 *)
+		MonitorPre := 13;
+		D_Step13 := TRUE;
+
+	(* Rung 29: COMMENT14 *)
+
+	14:
+		(* Rung 30: ניקוי 14 *)
+		(*
+		 * MOVE_INT Instruction Analysis:
+		 * Source:      Constant value '14'
+		 * Destination: MonitorPre AT %R09105
+		 * Length:      1 Word
+		 *)
+		MonitorPre := 14;
+		D_Step14 := TRUE;
+
+	(* Rung 31: COMMENT15 *)
+
+	15:
+		(* Rung 32: ניקוי 15 *)
+		(*
+		 * MOVE_INT Instruction Analysis:
+		 * Source:      Constant value '15'
+		 * Destination: MonitorPre AT %R09105
+		 * Length:      1 Word
+		 *)
+		MonitorPre := 15;
+		D_Step15 := TRUE;
+
+	(* Rung 33: COMMENT16 *)
+
+	16:
+		(* Rung 34: ניקוי 16 *)
+		(*
+		 * MOVE_INT Instruction Analysis:
+		 * Source:      Constant value '16'
+		 * Destination: MonitorPre AT %R09105
+		 * Length:      1 Word
+		 *)
+		MonitorPre := 16;
+		D_Step16 := TRUE;
+
+	(* Rung 35: COMMENT17 *)
+
+	17:
+		(* Rung 36: ניקוי 17 *)
+		(*
+		 * MOVE_INT Instruction Analysis:
+		 * Source:      Constant value '17'
+		 * Destination: MonitorPre AT %R09105
+		 * Length:      1 Word
+		 *)
+		MonitorPre := 17;
+		D_Step17 := TRUE;
+
+	(* Rung 37: COMMENT18 *)
+
+	18:
+		(* Rung 38: ניקוי 18 *)
+		(*
+		 * MOVE_INT Instruction Analysis:
+		 * Source:      Constant value '18'
+		 * Destination: MonitorPre AT %R09105
+		 * Length:      1 Word
+		 *)
+		MonitorPre := 18;
+		D_Step18 := TRUE;
+
+	(* Rung 39: COMMENT19 *)
+
+	19:
+		(* Rung 40: ניקוי 19 *)
+		(*
+		 * MOVE_INT Instruction Analysis:
+		 * Source:      Constant value '19'
+		 * Destination: MonitorPre AT %R09105
+		 * Length:      1 Word
+		 *)
+		MonitorPre := 19;
+		D_Step19 := TRUE;
+
+	(* Rung 41: COMMENT20 *)
+
+	20:
+		(* Rung 42: סודה 0 *)
+		(*
+		 * MOVE_INT Instruction Analysis:
+		 * Source:      Constant value '20'
+		 * Destination: MonitorPre AT %R09105
+		 * Length:      1 Word
+		 *)
+		MonitorPre := 20;
+		D_Step20 := TRUE;
+
+	(* Rung 43: COMMENT21 *)
+
+	21:
+		(* Rung 44: Line D *)
+		(*
+		 * MOVE_INT Instruction Analysis:
+		 * Source:      Constant value '60'
+		 * Destination: MonitorPre AT %R09105
+		 * Length:      1 Word
+		 *)
+		MonitorPre := 60;
+		(*
+		 * MOVE_INT Instruction Analysis:
+		 * Source:      SP_Fill_Vol AT %R09131
+		 * Destination: FIT107_Pre AT %R09132
+		 * Length:      1 Word
+		 *)
+		FIT107_Pre := SP_Fill_Vol;
+		D_Step21 := TRUE;
+
+	(* Rung 45: COMMENT22 *)
+
+	22:
+		(* Rung 46: סודה ריקון *)
+		(*
+		 * MOVE_INT Instruction Analysis:
+		 * Source:      Constant value '22'
+		 * Destination: MonitorPre AT %R09105
+		 * Length:      1 Word
+		 *)
+		MonitorPre := 22;
+		D_Step22 := TRUE;
+
+	(* Rung 47: COMMENT23 *)
+
+	23:
+		(* Rung 48: Line D *)
+		(*
+		 * MOVE_INT Instruction Analysis:
+		 * Source:      Constant value '23'
+		 * Destination: MonitorPre AT %R09105
+		 * Length:      1 Word
+		 *)
+		MonitorPre := 23;
+		D_Step23 := TRUE;
+
+	(* Rung 49: COMMENT24 *)
+
+	24:
+		(* Rung 50: Line D *)
+		(*
+		 * MOVE_INT Instruction Analysis:
+		 * Source:      Constant value '24'
+		 * Destination: MonitorPre AT %R09105
+		 * Length:      1 Word
+		 *)
+		MonitorPre := 24;
+		D_Step24 := TRUE;
+
+	(* Rung 51: COMMENT25 *)
+
+	25:
+		(* Rung 52: סודה 5 *)
+		(*
+		 * MOVE_INT Instruction Analysis:
+		 * Source:      Constant value '25'
+		 * Destination: MonitorPre AT %R09105
+		 * Length:      1 Word
+		 *)
+		MonitorPre := 25;
+		D_Step25 := TRUE;
+
+	(* Rung 53: COMMENT26 *)
+
+	26:
+		(* Rung 54: סודה 6 *)
+		(*
+		 * MOVE_INT Instruction Analysis:
+		 * Source:      Constant value '26'
+		 * Destination: MonitorPre AT %R09105
+		 * Length:      1 Word
+		 *)
+		MonitorPre := 26;
+		D_Step26 := TRUE;
+
+	(* Rung 55: COMMENT27 *)
+
+	27:
+		(* Rung 56: סודה 7 *)
+		(*
+		 * MOVE_INT Instruction Analysis:
+		 * Source:      Constant value '27'
+		 * Destination: MonitorPre AT %R09105
+		 * Length:      1 Word
+		 *)
+		MonitorPre := 27;
+		D_Step27 := TRUE;
+
+	(* Rung 57: COMMENT28 *)
+
+	28:
+		(* Rung 58: Line D *)
+		(*
+		 * MOVE_INT Instruction Analysis:
+		 * Source:      Constant value '30'
+		 * Destination: MonitorPre AT %R09105
+		 * Length:      1 Word
+		 *)
+		MonitorPre := 30;
+		D_Step28 := TRUE;
+
+	(* Rung 59: COMMENT29 *)
+
+	29:
+		(* Rung 60: Line D *)
+		(*
+		 * MOVE_INT Instruction Analysis:
+		 * Source:      R09111 AT %R09111
+		 * Destination: MonitorPre AT %R09105
+		 * Length:      1 Word
+		 *)
+		MonitorPre := R09111;
+		D_Step29 := TRUE;
+
+	(* Rung 61: COMMENT30 *)
+
+	30:
+		(* Rung 62: Line D *)
+		(*
+		 * MOVE_INT Instruction Analysis:
+		 * Source:      Constant value '2'
+		 * Destination: MonitorPre AT %R09105
+		 * Length:      1 Word
+		 *)
+		MonitorPre := 2;
+		D_Step30 := TRUE;
+
+	(* Rung 63: COMMENT31 *)
+
+	31:
+		(* Rung 64: סודה 11 *)
+		(*
+		 * MOVE_INT Instruction Analysis:
+		 * Source:      Constant value '31'
+		 * Destination: MonitorPre AT %R09105
+		 * Length:      1 Word
+		 *)
+		MonitorPre := 31;
+		D_Step31 := TRUE;
+
+	(* Rung 65: COMMENT32 *)
+
+	32:
+		(* Rung 66: סודה 12 *)
+		(*
+		 * MOVE_INT Instruction Analysis:
+		 * Source:      Constant value '32'
+		 * Destination: MonitorPre AT %R09105
+		 * Length:      1 Word
+		 *)
+		MonitorPre := 32;
+		D_Step32 := TRUE;
+
+	(* Rung 67: COMMENT33 *)
+
+	33:
+		(* Rung 68: סודה 13 *)
+		(*
+		 * MOVE_INT Instruction Analysis:
+		 * Source:      Constant value '33'
+		 * Destination: MonitorPre AT %R09105
+		 * Length:      1 Word
+		 *)
+		MonitorPre := 33;
+		D_Step33 := TRUE;
+
+	(* Rung 69: COMMENT34 *)
+
+	34:
+		(* Rung 70: סודה 14 *)
+		(*
+		 * MOVE_INT Instruction Analysis:
+		 * Source:      Constant value '34'
+		 * Destination: MonitorPre AT %R09105
+		 * Length:      1 Word
+		 *)
+		MonitorPre := 34;
+		D_Step34 := TRUE;
+
+	(* Rung 71: COMMENT35 *)
+
+	35:
+		(* Rung 72: סודה 15 *)
+		(*
+		 * MOVE_INT Instruction Analysis:
+		 * Source:      Constant value '35'
+		 * Destination: MonitorPre AT %R09105
+		 * Length:      1 Word
+		 *)
+		MonitorPre := 35;
+		D_Step35 := TRUE;
+
+	(* Rung 73: COMMENT36 *)
+
+	36:
+		(* Rung 74: סודה 16 *)
+		(*
+		 * MOVE_INT Instruction Analysis:
+		 * Source:      Constant value '36'
+		 * Destination: MonitorPre AT %R09105
+		 * Length:      1 Word
+		 *)
+		MonitorPre := 36;
+		D_Step36 := TRUE;
+
+	(* Rung 75: COMMENT37 *)
+
+	37:
+		(* Rung 76: סודה 17 *)
+		(*
+		 * MOVE_INT Instruction Analysis:
+		 * Source:      Constant value '37'
+		 * Destination: MonitorPre AT %R09105
+		 * Length:      1 Word
+		 *)
+		MonitorPre := 37;
+		D_Step37 := TRUE;
+
+	(* Rung 77: COMMENT38 *)
+
+	38:
+		(* Rung 78: סודה 18 *)
+		(*
+		 * MOVE_INT Instruction Analysis:
+		 * Source:      Constant value '38'
+		 * Destination: MonitorPre AT %R09105
+		 * Length:      1 Word
+		 *)
+		MonitorPre := 38;
+		D_Step38 := TRUE;
+
+	(* Rung 79: COMMENT39 *)
+
+	39:
+		(* Rung 80: סודה 19 *)
+		(*
+		 * MOVE_INT Instruction Analysis:
+		 * Source:      Constant value '39'
+		 * Destination: MonitorPre AT %R09105
+		 * Length:      1 Word
+		 *)
+		MonitorPre := 39;
+		D_Step39 := TRUE;
+
+	(* Rung 81: COMMENT40 *)
+
+	40:
+		(* Rung 82: שטיפת ביניים 0 *)
+		(*
+		 * MOVE_INT Instruction Analysis:
+		 * Source:      Constant value '40'
+		 * Destination: MonitorPre AT %R09105
+		 * Length:      1 Word
+		 *)
+		MonitorPre := 40;
+		D_Step40 := TRUE;
+
+	(* Rung 83: COMMENT41 *)
+
+	41:
+		(* Rung 84: Line D *)
+		(*
+		 * MOVE_INT Instruction Analysis:
+		 * Source:      Constant value '60'
+		 * Destination: MonitorPre AT %R09105
+		 * Length:      1 Word
+		 *)
+		MonitorPre := 60;
+		(*
+		 * MOVE_INT Instruction Analysis:
+		 * Source:      SP_Fill_Vol AT %R09131
+		 * Destination: FIT107_Pre AT %R09132
+		 * Length:      1 Word
+		 *)
+		FIT107_Pre := SP_Fill_Vol;
+		D_Step41 := TRUE;
+
+	(* Rung 85: COMMENT42 *)
+
+	42:
+		(* Rung 86: Line D *)
+		(*
+		 * MOVE_INT Instruction Analysis:
+		 * Source:      Constant value '42'
+		 * Destination: MonitorPre AT %R09105
+		 * Length:      1 Word
+		 *)
+		MonitorPre := 42;
+		D_Step42 := TRUE;
+
+	(* Rung 87: COMMENT43 *)
+
+	43:
+		(* Rung 88: Line D *)
+		(*
+		 * MOVE_INT Instruction Analysis:
+		 * Source:      Constant value '43'
+		 * Destination: MonitorPre AT %R09105
+		 * Length:      1 Word
+		 *)
+		MonitorPre := 43;
+		D_Step43 := TRUE;
+
+	(* Rung 89: COMMENT44 *)
+
+	44:
+		(* Rung 90: Line D *)
+		(*
+		 * MOVE_INT Instruction Analysis:
+		 * Source:      Constant value '44'
+		 * Destination: MonitorPre AT %R09105
+		 * Length:      1 Word
+		 *)
+		MonitorPre := 44;
+		D_Step44 := TRUE;
+
+	(* Rung 91: COMMENT45 *)
+
+	45:
+		(* Rung 92: שטיפת ביניים 5 *)
+		(*
+		 * MOVE_INT Instruction Analysis:
+		 * Source:      Constant value '45'
+		 * Destination: MonitorPre AT %R09105
+		 * Length:      1 Word
+		 *)
+		MonitorPre := 45;
+		D_Step45 := TRUE;
+
+	(* Rung 93: COMMENT46 *)
+
+	46:
+		(* Rung 94: שטיפת ביניים 6 *)
+		(*
+		 * MOVE_INT Instruction Analysis:
+		 * Source:      Constant value '46'
+		 * Destination: MonitorPre AT %R09105
+		 * Length:      1 Word
+		 *)
+		MonitorPre := 46;
+		D_Step46 := TRUE;
+
+	(* Rung 95: COMMENT47 *)
+
+	47:
+		(* Rung 96: שטיפת ביניים 7 *)
+		(*
+		 * MOVE_INT Instruction Analysis:
+		 * Source:      Constant value '47'
+		 * Destination: MonitorPre AT %R09105
+		 * Length:      1 Word
+		 *)
+		MonitorPre := 47;
+		D_Step47 := TRUE;
+
+	(* Rung 97: COMMENT48 *)
+
+	48:
+		(* Rung 98: Line D *)
+		(*
+		 * MOVE_INT Instruction Analysis:
+		 * Source:      Constant value '60'
+		 * Destination: MonitorPre AT %R09105
+		 * Length:      1 Word
+		 *)
+		MonitorPre := 60;
+		D_Step48 := TRUE;
+
+	(* Rung 99: COMMENT49 *)
+
+	49:
+		(* Rung 100: שטיפת ביניים פליפים *)
+		(*
+		 * MOVE_INT Instruction Analysis:
+		 * Source:      R09112 AT %R09112
+		 * Destination: MonitorPre AT %R09105
+		 * Length:      1 Word
+		 *)
+		MonitorPre := R09112;
+		D_Step49 := TRUE;
+
+	(* Rung 101: COMMENT50 *)
+
+	50:
+		(* Rung 102: שטיפת ביניים 10 *)
+		(*
+		 * MOVE_INT Instruction Analysis:
+		 * Source:      Constant value '50'
+		 * Destination: MonitorPre AT %R09105
+		 * Length:      1 Word
+		 *)
+		MonitorPre := 50;
+		D_Step50 := TRUE;
+
+	(* Rung 103: COMMENT51 *)
+
+	51:
+		(* Rung 104: שטיפת ביניים 11 *)
+		(*
+		 * MOVE_INT Instruction Analysis:
+		 * Source:      Constant value '51'
+		 * Destination: MonitorPre AT %R09105
+		 * Length:      1 Word
+		 *)
+		MonitorPre := 51;
+		D_Step51 := TRUE;
+
+	(* Rung 105: COMMENT52 *)
+
+	52:
+		(* Rung 106: שטיפת ביניים 12 *)
+		(*
+		 * MOVE_INT Instruction Analysis:
+		 * Source:      Constant value '52'
+		 * Destination: MonitorPre AT %R09105
+		 * Length:      1 Word
+		 *)
+		MonitorPre := 52;
+		D_Step52 := TRUE;
+
+	(* Rung 107: COMMENT53 *)
+
+	53:
+		(* Rung 108: שטיפת ביניים 13 *)
+		(*
+		 * MOVE_INT Instruction Analysis:
+		 * Source:      Constant value '53'
+		 * Destination: MonitorPre AT %R09105
+		 * Length:      1 Word
+		 *)
+		MonitorPre := 53;
+		D_Step53 := TRUE;
+
+	(* Rung 109: COMMENT54 *)
+
+	54:
+		(* Rung 110: שטיפת ביניים 14 *)
+		(*
+		 * MOVE_INT Instruction Analysis:
+		 * Source:      Constant value '54'
+		 * Destination: MonitorPre AT %R09105
+		 * Length:      1 Word
+		 *)
+		MonitorPre := 54;
+		D_Step54 := TRUE;
+
+	(* Rung 111: COMMENT55 *)
+
+	55:
+		(* Rung 112: שטיפת ביניים 15 *)
+		(*
+		 * MOVE_INT Instruction Analysis:
+		 * Source:      Constant value '55'
+		 * Destination: MonitorPre AT %R09105
+		 * Length:      1 Word
+		 *)
+		MonitorPre := 55;
+		D_Step55 := TRUE;
+
+	(* Rung 113: COMMENT56 *)
+
+	56:
+		(* Rung 114: שטיפת ביניים 16 *)
+		(*
+		 * MOVE_INT Instruction Analysis:
+		 * Source:      Constant value '56'
+		 * Destination: MonitorPre AT %R09105
+		 * Length:      1 Word
+		 *)
+		MonitorPre := 56;
+		D_Step56 := TRUE;
+
+	(* Rung 115: COMMENT57 *)
+
+	57:
+		(* Rung 116: שטיפת ביניים 17 *)
+		(*
+		 * MOVE_INT Instruction Analysis:
+		 * Source:      Constant value '57'
+		 * Destination: MonitorPre AT %R09105
+		 * Length:      1 Word
+		 *)
+		MonitorPre := 57;
+		D_Step57 := TRUE;
+
+	(* Rung 117: COMMENT58 *)
+
+	58:
+		(* Rung 118: שטיפת ביניים 18 *)
+		(*
+		 * MOVE_INT Instruction Analysis:
+		 * Source:      Constant value '58'
+		 * Destination: MonitorPre AT %R09105
+		 * Length:      1 Word
+		 *)
+		MonitorPre := 58;
+		D_Step58 := TRUE;
+
+	(* Rung 119: COMMENT59 *)
+
+	59:
+		(* Rung 120: שטיפת ביניים 19 *)
+		(*
+		 * MOVE_INT Instruction Analysis:
+		 * Source:      Constant value '59'
+		 * Destination: MonitorPre AT %R09105
+		 * Length:      1 Word
+		 *)
+		MonitorPre := 59;
+		D_Step59 := TRUE;
+
+	(* Rung 121: COMMENT60 *)
+
+	60:
+		(* Rung 122: חומצה 0 *)
+		(*
+		 * MOVE_INT Instruction Analysis:
+		 * Source:      Constant value '60'
+		 * Destination: MonitorPre AT %R09105
+		 * Length:      1 Word
+		 *)
+		MonitorPre := 60;
+		D_Step60 := TRUE;
+
+	(* Rung 123: COMMENT61 *)
+
+	61:
+		(* Rung 124: Line D *)
+		(*
+		 * MOVE_INT Instruction Analysis:
+		 * Source:      Constant value '60'
+		 * Destination: MonitorPre AT %R09105
+		 * Length:      1 Word
+		 *)
+		MonitorPre := 60;
+		(*
+		 * MOVE_INT Instruction Analysis:
+		 * Source:      SP_Fill_Vol AT %R09131
+		 * Destination: FIT107_Pre AT %R09132
+		 * Length:      1 Word
+		 *)
+		FIT107_Pre := SP_Fill_Vol;
+		D_Step61 := TRUE;
+
+	(* Rung 125: COMMENT62 *)
+
+	62:
+		(* Rung 126: Line D *)
+		(*
+		 * MOVE_INT Instruction Analysis:
+		 * Source:      Constant value '62'
+		 * Destination: MonitorPre AT %R09105
+		 * Length:      1 Word
+		 *)
+		MonitorPre := 62;
+		D_Step62 := TRUE;
+
+	(* Rung 127: COMMENT63 *)
+
+	63:
+		(* Rung 128: Line D *)
+		(*
+		 * MOVE_INT Instruction Analysis:
+		 * Source:      Constant value '63'
+		 * Destination: MonitorPre AT %R09105
+		 * Length:      1 Word
+		 *)
+		MonitorPre := 63;
+		D_Step63 := TRUE;
+
+	(* Rung 129: COMMENT64 *)
+
+	64:
+		(* Rung 130: Line D *)
+		(*
+		 * MOVE_INT Instruction Analysis:
+		 * Source:      Constant value '64'
+		 * Destination: MonitorPre AT %R09105
+		 * Length:      1 Word
+		 *)
+		MonitorPre := 64;
+		D_Step64 := TRUE;
+
+	(* Rung 131: COMMENT65 *)
+
+	65:
+		(* Rung 132: חומצה 5 *)
+		(*
+		 * MOVE_INT Instruction Analysis:
+		 * Source:      Constant value '65'
+		 * Destination: MonitorPre AT %R09105
+		 * Length:      1 Word
+		 *)
+		MonitorPre := 65;
+		D_Step65 := TRUE;
+
+	(* Rung 133: COMMENT66 *)
+
+	66:
+		(* Rung 134: חומצה 6 *)
+		(*
+		 * MOVE_INT Instruction Analysis:
+		 * Source:      Constant value '66'
+		 * Destination: MonitorPre AT %R09105
+		 * Length:      1 Word
+		 *)
+		MonitorPre := 66;
+		D_Step66 := TRUE;
+
+	(* Rung 135: COMMENT67 *)
+
+	67:
+		(* Rung 136: חומצה 7 *)
+		(*
+		 * MOVE_INT Instruction Analysis:
+		 * Source:      Constant value '67'
+		 * Destination: MonitorPre AT %R09105
+		 * Length:      1 Word
+		 *)
+		MonitorPre := 67;
+		D_Step67 := TRUE;
+
+	(* Rung 137: COMMENT68 *)
+
+	68:
+		(* Rung 138: Line D *)
+		(*
+		 * MOVE_INT Instruction Analysis:
+		 * Source:      Constant value '30'
+		 * Destination: MonitorPre AT %R09105
+		 * Length:      1 Word
+		 *)
+		MonitorPre := 30;
+		D_Step68 := TRUE;
+
+	(* Rung 139: COMMENT69 *)
+
+	69:
+		(* Rung 140: Line D *)
+		(*
+		 * MOVE_INT Instruction Analysis:
+		 * Source:      R09113 AT %R09113
+		 * Destination: MonitorPre AT %R09105
+		 * Length:      1 Word
+		 *)
+		MonitorPre := R09113;
+		D_Step69 := TRUE;
+
+	(* Rung 141: COMMENT70 *)
+
+	70:
+		(* Rung 142: חומצה 10 *)
+		(*
+		 * MOVE_INT Instruction Analysis:
+		 * Source:      Constant value '70'
+		 * Destination: MonitorPre AT %R09105
+		 * Length:      1 Word
+		 *)
+		MonitorPre := 70;
+		D_Step70 := TRUE;
+
+	(* Rung 143: COMMENT71 *)
+
+	71:
+		(* Rung 144: חומצה 11 *)
+		(*
+		 * MOVE_INT Instruction Analysis:
+		 * Source:      Constant value '71'
+		 * Destination: MonitorPre AT %R09105
+		 * Length:      1 Word
+		 *)
+		MonitorPre := 71;
+		D_Step71 := TRUE;
+
+	(* Rung 145: COMMENT72 *)
+
+	72:
+		(* Rung 146: חומצה 12 *)
+		(*
+		 * MOVE_INT Instruction Analysis:
+		 * Source:      Constant value '72'
+		 * Destination: MonitorPre AT %R09105
+		 * Length:      1 Word
+		 *)
+		MonitorPre := 72;
+		D_Step72 := TRUE;
+
+	(* Rung 147: COMMENT73 *)
+
+	73:
+		(* Rung 148: חומצה 13 *)
+		(*
+		 * MOVE_INT Instruction Analysis:
+		 * Source:      Constant value '73'
+		 * Destination: MonitorPre AT %R09105
+		 * Length:      1 Word
+		 *)
+		MonitorPre := 73;
+		D_Step73 := TRUE;
+
+	(* Rung 149: COMMENT74 *)
+
+	74:
+		(* Rung 150: חומצה 14 *)
+		(*
+		 * MOVE_INT Instruction Analysis:
+		 * Source:      Constant value '74'
+		 * Destination: MonitorPre AT %R09105
+		 * Length:      1 Word
+		 *)
+		MonitorPre := 74;
+		D_Step74 := TRUE;
+
+	(* Rung 151: COMMENT75 *)
+
+	75:
+		(* Rung 152: חומצה 15 *)
+		(*
+		 * MOVE_INT Instruction Analysis:
+		 * Source:      Constant value '75'
+		 * Destination: MonitorPre AT %R09105
+		 * Length:      1 Word
+		 *)
+		MonitorPre := 75;
+		D_Step75 := TRUE;
+
+	(* Rung 153: COMMENT76 *)
+
+	76:
+		(* Rung 154: חומצה 16 *)
+		(*
+		 * MOVE_INT Instruction Analysis:
+		 * Source:      Constant value '76'
+		 * Destination: MonitorPre AT %R09105
+		 * Length:      1 Word
+		 *)
+		MonitorPre := 76;
+		D_Step76 := TRUE;
+
+	(* Rung 155: COMMENT77 *)
+
+	77:
+		(* Rung 156: חומצה 17 *)
+		(*
+		 * MOVE_INT Instruction Analysis:
+		 * Source:      Constant value '77'
+		 * Destination: MonitorPre AT %R09105
+		 * Length:      1 Word
+		 *)
+		MonitorPre := 77;
+		D_Step77 := TRUE;
+
+	(* Rung 157: COMMENT78 *)
+
+	78:
+		(* Rung 158: חומצה 18 *)
+		(*
+		 * MOVE_INT Instruction Analysis:
+		 * Source:      Constant value '78'
+		 * Destination: MonitorPre AT %R09105
+		 * Length:      1 Word
+		 *)
+		MonitorPre := 78;
+		D_Step78 := TRUE;
+
+	(* Rung 159: COMMENT79 *)
+
+	79:
+		(* Rung 160: חומצה 19 *)
+		(*
+		 * MOVE_INT Instruction Analysis:
+		 * Source:      Constant value '79'
+		 * Destination: MonitorPre AT %R09105
+		 * Length:      1 Word
+		 *)
+		MonitorPre := 79;
+		D_Step79 := TRUE;
+
+	(* Rung 161: COMMENT80 *)
+
+	80:
+		(* Rung 162: שטיפה אחרונה 0 *)
+		(*
+		 * MOVE_INT Instruction Analysis:
+		 * Source:      Constant value '80'
+		 * Destination: MonitorPre AT %R09105
+		 * Length:      1 Word
+		 *)
+		MonitorPre := 80;
+		D_Step80 := TRUE;
+
+	(* Rung 163: COMMENT81 *)
+
+	81:
+		(* Rung 164: Line D *)
+		(*
+		 * MOVE_INT Instruction Analysis:
+		 * Source:      Constant value '60'
+		 * Destination: MonitorPre AT %R09105
+		 * Length:      1 Word
+		 *)
+		MonitorPre := 60;
+		(*
+		 * MOVE_INT Instruction Analysis:
+		 * Source:      SP_Fill_Vol AT %R09131
+		 * Destination: FIT107_Pre AT %R09132
+		 * Length:      1 Word
+		 *)
+		FIT107_Pre := SP_Fill_Vol;
+		D_Step81 := TRUE;
+
+	(* Rung 165: COMMENT82 *)
+
+	82:
+		(* Rung 166: Line D *)
+		(*
+		 * MOVE_INT Instruction Analysis:
+		 * Source:      Constant value '82'
+		 * Destination: MonitorPre AT %R09105
+		 * Length:      1 Word
+		 *)
+		MonitorPre := 82;
+		D_Step82 := TRUE;
+
+	(* Rung 167: COMMENT83 *)
+
+	83:
+		(* Rung 168: Line D *)
+		(*
+		 * MOVE_INT Instruction Analysis:
+		 * Source:      Constant value '83'
+		 * Destination: MonitorPre AT %R09105
+		 * Length:      1 Word
+		 *)
+		MonitorPre := 83;
+		D_Step83 := TRUE;
+
+	(* Rung 169: COMMENT84 *)
+
+	84:
+		(* Rung 170: Line D *)
+		(*
+		 * MOVE_INT Instruction Analysis:
+		 * Source:      Constant value '84'
+		 * Destination: MonitorPre AT %R09105
+		 * Length:      1 Word
+		 *)
+		MonitorPre := 84;
+		D_Step84 := TRUE;
+
+	(* Rung 171: COMMENT85 *)
+
+	85:
+		(* Rung 172: שטיפה אחרונה 5 *)
+		(*
+		 * MOVE_INT Instruction Analysis:
+		 * Source:      Constant value '85'
+		 * Destination: MonitorPre AT %R09105
+		 * Length:      1 Word
+		 *)
+		MonitorPre := 85;
+		D_Step85 := TRUE;
+
+	(* Rung 173: COMMENT86 *)
+
+	86:
+		(* Rung 174: שטיפה אחרונה 6 *)
+		(*
+		 * MOVE_INT Instruction Analysis:
+		 * Source:      Constant value '86'
+		 * Destination: MonitorPre AT %R09105
+		 * Length:      1 Word
+		 *)
+		MonitorPre := 86;
+		D_Step86 := TRUE;
+
+	(* Rung 175: COMMENT87 *)
+
+	87:
+		(* Rung 176: שטיפה אחרונה 7 *)
+		(*
+		 * MOVE_INT Instruction Analysis:
+		 * Source:      Constant value '87'
+		 * Destination: MonitorPre AT %R09105
+		 * Length:      1 Word
+		 *)
+		MonitorPre := 87;
+		D_Step87 := TRUE;
+
+	(* Rung 177: COMMENT88 *)
+
+	88:
+		(* Rung 178: Line D *)
+		(*
+		 * MOVE_INT Instruction Analysis:
+		 * Source:      Constant value '30'
+		 * Destination: MonitorPre AT %R09105
+		 * Length:      1 Word
+		 *)
+		MonitorPre := 30;
+		D_Step88 := TRUE;
+
+	(* Rung 179: COMMENT89 *)
+
+	89:
+		(* Rung 180: סיום תהליך עיקור *)
+		(*
+		 * MOVE_INT Instruction Analysis:
+		 * Source:      R09114 AT %R09114
+		 * Destination: MonitorPre AT %R09105
+		 * Length:      1 Word
+		 *)
+		MonitorPre := R09114;
+		D_Step100 := TRUE;
+
+	(* Rung 181: COMMENT90 *)
+
+	90:
+		(* Rung 182: Line D *)
+		(*
+		 * MOVE_INT Instruction Analysis:
+		 * Source:      Constant value '60'
+		 * Destination: MonitorPre AT %R09105
+		 * Length:      1 Word
+		 *)
+		MonitorPre := 60;
+		D_Step90 := TRUE;
+
+	(* Rung 183: COMMENT91 *)
+
+	91:
+		(* Rung 184: שטיפה אחרונה 11 *)
+		(*
+		 * MOVE_INT Instruction Analysis:
+		 * Source:      Constant value '91'
+		 * Destination: MonitorPre AT %R09105
+		 * Length:      1 Word
+		 *)
+		MonitorPre := 91;
+		D_Step91 := TRUE;
+
+	(* Rung 185: COMMENT92 *)
+
+	92:
+		(* Rung 186: שטיפה אחרונה 12 *)
+		(*
+		 * MOVE_INT Instruction Analysis:
+		 * Source:      Constant value '92'
+		 * Destination: MonitorPre AT %R09105
+		 * Length:      1 Word
+		 *)
+		MonitorPre := 92;
+		D_Step92 := TRUE;
+
+	(* Rung 187: COMMENT93 *)
+
+	93:
+		(* Rung 188: שטיפה אחרונה 13 *)
+		(*
+		 * MOVE_INT Instruction Analysis:
+		 * Source:      Constant value '93'
+		 * Destination: MonitorPre AT %R09105
+		 * Length:      1 Word
+		 *)
+		MonitorPre := 93;
+		D_Step93 := TRUE;
+
+	(* Rung 189: COMMENT94 *)
+
+	94:
+		(* Rung 190: שטיפה אחרונה 14 *)
+		(*
+		 * MOVE_INT Instruction Analysis:
+		 * Source:      Constant value '94'
+		 * Destination: MonitorPre AT %R09105
+		 * Length:      1 Word
+		 *)
+		MonitorPre := 94;
+		D_Step94 := TRUE;
+
+	(* Rung 191: COMMENT95 *)
+
+	95:
+		(* Rung 192: שטיפה אחרונה 15 *)
+		(*
+		 * MOVE_INT Instruction Analysis:
+		 * Source:      Constant value '95'
+		 * Destination: MonitorPre AT %R09105
+		 * Length:      1 Word
+		 *)
+		MonitorPre := 95;
+		D_Step95 := TRUE;
+
+	(* Rung 193: COMMENT96 *)
+
+	96:
+		(* Rung 194: שטיפה אחרונה 16 *)
+		(*
+		 * MOVE_INT Instruction Analysis:
+		 * Source:      Constant value '96'
+		 * Destination: MonitorPre AT %R09105
+		 * Length:      1 Word
+		 *)
+		MonitorPre := 96;
+		D_Step96 := TRUE;
+
+	(* Rung 195: COMMENT97 *)
+
+	97:
+		(* Rung 196: שטיפה אחרונה 17 *)
+		(*
+		 * MOVE_INT Instruction Analysis:
+		 * Source:      Constant value '97'
+		 * Destination: MonitorPre AT %R09105
+		 * Length:      1 Word
+		 *)
+		MonitorPre := 97;
+		D_Step97 := TRUE;
+
+	(* Rung 197: COMMENT98 *)
+
+	98:
+		(* Rung 198: שטיפה אחרונה 18 *)
+		(*
+		 * MOVE_INT Instruction Analysis:
+		 * Source:      Constant value '98'
+		 * Destination: MonitorPre AT %R09105
+		 * Length:      1 Word
+		 *)
+		MonitorPre := 98;
+		D_Step98 := TRUE;
+
+	(* Rung 199: COMMENT99 *)
+
+	99:
+		(* Rung 200: שטיפה אחרונה 19 *)
+		(*
+		 * MOVE_INT Instruction Analysis:
+		 * Source:      Constant value '99'
+		 * Destination: MonitorPre AT %R09105
+		 * Length:      1 Word
+		 *)
+		MonitorPre := 99;
+		D_Step99 := TRUE;
+
+END_CASE;

@@ -1,0 +1,105 @@
+(*
+* @purpose: To gather and pack PLC data for display and control on the Cimplicity SCADA/MMI system.
+*           This program consolidates various discrete I/O signals and internal status bits into
+*           WORD-based registers, making them accessible to the HMI. It handles digital inputs,
+*           digital outputs, and critical level/status alarms.
+* @platform: GE/Emerson RX3i PLC
+* @language: Structured Text (ST)
+*
+* @inputs:
+*   XVO/XVC tags (%I00001 - %I00007): Digital input signals, typically valve position feedback (Open/Closed).
+*   XV tags (%Q00001 - %Q00006): Digital output signals representing commands to field devices (e.g., valves).
+*   LOLVL/HILVL tags (%M00112 - %M00121): Internal boolean flags for tank level alarms (Low/High).
+*   T#_BUSY tags (%M00122 - %M00126): Internal flags indicating if a tank is currently in an active process.
+*   T4ACTIV (%M00127): A flag to show which of the two soda tanks is currently active.
+*
+* @outputs:
+*   DI_add_2MMI (%R09016): A packed WORD register containing the status of digital inputs for the MMI.
+*   DQ_add_2MMI (%R09024): A packed WORD register reflecting the status of digital outputs for the MMI.
+*   LVL_ALM (%R09045): A packed WORD register containing the status of all critical level and tank status alarms for the MMI.
+*
+* @notes: This file is a crucial link between the PLC's internal state and the operator's view on the SCADA system.
+*         The ANG2ENG() function call at the beginning is a placeholder for analog-to-engineering unit conversions,
+*         which are handled in a separate block but called from here.
+*)
+VAR_GLOBAL
+    DI_add_2MMI AT %R09016 : ARRAY [1..7] OF WORD; (* DI from add-on to MMI *)
+    DQ_add_2MMI AT %R09024 : ARRAY [1..6] OF WORD; (* DQ to add-on from MMI *)
+    LOLVL4 AT %M00112 : ARRAY [1..16] OF BOOL; (* Tank 4 Low level *)
+    LVL_ALM AT %R09045 : WORD; (* Level alarms to MMI *)
+    XVO3001 AT %I00001 : ARRAY [1..7] OF WORD; (* DI from add-on module *)
+    XV4001 AT %Q00001 : ARRAY [1..6] OF WORD; (* DQ to add-on module *)
+	XVO3001 AT %I00001 : BOOL; (* WATER TO FRESH WATER TANK OPEN *)
+	XVC3002 AT %I00002 : BOOL; (* WATER TO FRESH WATER TANK "CLOSE" *)
+	XVO3003 AT %I00003 : BOOL; (* CIPR "A" TO SODA TANK 1 "OPEN" *)
+	XVC3004 AT %I00004 : BOOL; (* CIPR "A" TO SODA TANK 1 "CLOSE" *)
+	XVO3005 AT %I00005 : BOOL; (* CIPR "B" TO SODA TANK 1 "OPEN" *)
+	XVC3006 AT %I00006 : BOOL; (* CIPR "B" TO SODA TANK 1 "CLOSE" *)
+	XVO3007 AT %I00007 : BOOL; (* CIPR "A" TO SODA TANK 2 "OPEN" *)
+	XV4001 AT %Q00001 : BOOL; (* WATER TO FRESH WATER TANK TO "OPEN" *)
+	XV4002 AT %Q00002 : BOOL; (* CIPR "A" TO SODA TANK 1 TO "OPEN" *)
+	XV4003 AT %Q00003 : BOOL; (* CIPR "B" TO SODA TANK 1 TO "OPEN" *)
+	XV4004 AT %Q00004 : BOOL; (* CIPR "A" TO SODA TANK 2 TO "OPEN" *)
+	XV4005 AT %Q00005 : BOOL; (* CIPR "B" TO SODA TANK 2 TO "OPEN" *)
+	XV4006 AT %Q00006 : BOOL; (* CIPR "A" TO ASID TANK TO "OPEN" *)
+	LOLVL4 AT %M00112 : BOOL; (* Low level Soda1 *)
+	HILVL5 AT %M00113 : BOOL; (* High level Soda2 *)
+	HILVL1 AT %M00114 : BOOL; (* High level Water *)
+	LOLVL1 AT %M00115 : BOOL; (* Low level Water *)
+	HILVL2 AT %M00116 : BOOL; (* High level Rec water *)
+	LOLVL2 AT %M00117 : BOOL; (* Low level Rec water *)
+	HILVL3 AT %M00118 : BOOL; (* High level Acid *)
+	LOLVL3 AT %M00119 : BOOL; (* Low level Acid *)
+	HILVL4 AT %M00120 : BOOL; (* High level Soda 1 *)
+	LOLVL5 AT %M00121 : BOOL; (* Low level Soda2 *)
+	T1_BUSY AT %M00122 : BOOL; (* Water tank busy *)
+	T2_BUSY AT %M00123 : BOOL; (* Recovery water tank busy *)
+	T3_BUSY AT %M00124 : BOOL; (* Acid tank busy *)
+	T4_BUSY AT %M00125 : BOOL; (* Soda 1 tank busy *)
+	T5_BUSY AT %M00126 : BOOL; (* Soda 2 tank busy *)
+	T4ACTIV AT %M00127 : BOOL; (* Soda1(tnk 4) active,Soda2 passiv *)
+
+
+
+END_VAR
+
+(* Rung 1 - Analog to Engineering unit *)
+ANG2ENG();
+
+(* Rung 2 - DI from add-on to MMI *)
+DI_add_2MMI.X0 := XVO3001;
+DI_add_2MMI.X1 := XVC3002;
+DI_add_2MMI.X2 := XVO3003;
+DI_add_2MMI.X3 := XVC3004;
+DI_add_2MMI.X4 := XVO3005;
+DI_add_2MMI.X5 := XVC3006;
+DI_add_2MMI.X6 := XVO3007;
+
+
+(* Rung 3 - DQ to add-on from MMI *)
+DO_add_2MMI.X0 := XV4001;
+DO_add_2MMI.X1 := XV4002;
+DO_add_2MMI.X2 := XV4003;
+DO_add_2MMI.X3 := XV4004;
+DO_add_2MMI.X4 := XV4005;
+DO_add_2MMI.X5 := XV4006;
+
+
+(* Rung 4 - Level alarms to MMI *)
+(* Mapping individual bits to LVL_ALM register *)
+LVL_ALM.X0 := LOLVL4;
+LVL_ALM.X1 := HILVL5;
+LVL_ALM.X2 := HILVL1;
+LVL_ALM.X3 := LOLVL1;
+LVL_ALM.X4 := HILVL2;
+LVL_ALM.X5 := LOLVL2;
+LVL_ALM.X6 := HILVL3;
+LVL_ALM.X7 := LOLVL3;
+LVL_ALM.X8 := HILVL4;
+LVL_ALM.X9 := LOLVL5;
+LVL_ALM.X10 := T1_BUSY;
+LVL_ALM.X11 := T2_BUSY;
+LVL_ALM.X12 := T3_BUSY;
+LVL_ALM.X13 := T4_BUSY;
+LVL_ALM.X14 := T5_BUSY;
+LVL_ALM.X15 := T4ACTIV;

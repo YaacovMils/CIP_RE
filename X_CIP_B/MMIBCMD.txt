@@ -1,0 +1,48 @@
+(*
+* @purpose: Handles specific HMI commands related to the "B" CIP unit.
+*           This program interprets commands from the MMI to stop the "B"
+*           unit's automatic sequence and to reset its associated alarms.
+* @platform: GE/Emerson RX3i PLC
+* @language: Structured Text (ST)
+*
+* @inputs:
+*   R00536[62] (INT) (aliased as MMICMD): The command code received from the HMI.
+*     - Command `36`: Stop Batch Mode.
+*     - Commands `38`, `39`: Reset Alarms.
+*
+* @outputs:
+*   B_ALARM (%M00171) (BOOL): Resets the general alarm for the "B" unit.
+*   BMMISTP (%M00153) (BOOL): Sets a flag to stop the "B" unit's automatic sequence.
+*
+* @notes: This program is called by MMI0CMD.txt whenever a new command is detected. It only acts on
+*         commands relevant to the "B" unit.
+*)
+VAR_GLOBAL
+    (* Batch Mode Selected when another mode is selected *)
+    B_ALARM AT %M00171 : BOOL;
+
+    (* Stop Batch Mode *)
+    BMMISTP AT %M00153 : BOOL;
+
+    (* Base array for MMI commands. Element [62] is aliased as MMICMD: MMI command(hnds,b4activ,etc) *)
+    R00536 AT %R00536 : ARRAY[0..64] OF WORD;
+END_VAR
+
+(* Rung 1: Reset Alarm and Stop for commands 38 & 39 *)
+(*
+ * Block Instruction: RANGE_INT
+ * This instruction checks if an input value is within an inclusive numerical range.
+ * Low Limit (L1): 38
+ * High Limit (L2): 39
+ * Input (IN): R00536[62] (aliased as MMICMD)
+ * The output (Q) is TRUE if IN is >= L1 AND IN is <= L2.
+ *)
+IF (R00536[62] >= 38 AND R00536[62] <= 39) THEN
+    B_ALARM := FALSE;
+    BMMISTP := FALSE;
+END_IF;
+
+(* Rung 2: Stop Batch Mode *)
+IF R00536[62] = 36 THEN
+    BMMISTP := TRUE;
+END_IF;

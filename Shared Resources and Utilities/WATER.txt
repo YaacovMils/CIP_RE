@@ -1,0 +1,134 @@
+(*!
+@purpose
+This program (`WATER.txt`) manages a general-purpose water distribution system. It controls a water pump and a set of valves to direct water from a main supply tank to one of several possible destinations based on operator selections and tank levels.
+
+The core logic of the program is to:
+1.  **Monitor the Source Tank:** It continuously checks the level of the main water supply tank. If the level is low for more than 5 minutes, it sets a fault (`LVL_OK`) and disables all operations.
+2.  **Arbitrate Destination Requests:** It manages three mutually exclusive destination requests: `WTR2TK1` (Water to Tank 1), `WTR2TK4` (Water to Tank 4), and `TO_CW` (Water to Cool Water Tank). The logic ensures that only one of these requests can be active at any given time.
+3.  **Control Valves and Pump:** Based on the active destination request, the program opens the corresponding path valves. After a 10-second delay to allow the valve to open, it starts the main water pump (`P4023`). This delay is a critical safety feature to prevent the pump from running against a closed valve (dead-heading).
+
+@inputs
+- `HLV_WTR`, `LOW_WTR`, `OV_HL`: Level switch inputs from the main water supply tank.
+- `HLCW`: High-level switch input from the Cool Water tank.
+- `WTR2TK1`, `WTR2TK4`: These appear to be selector flags, likely from an HMI, requesting water to be sent to Tank 1 or Tank 4.
+- `STOPALL`: A global stop command.
+
+@outputs
+- `P4023`: The command to start the main water distribution pump.
+- `XV4021`: Command to open the valve to the Cool Water tank.
+- `XV4022`: Command to open the main valve to the CIP area.
+- `XV4024`: Command to open the valve specifically to Tank 1.
+- `XVM044`: Command to open the valve specifically to Tank 4.
+- `WTNK_OK`: A status flag indicating that the main water supply tank level is healthy.
+
+@notes
+- This code is for a GE/Emerson RX3i PLC and is written in Structured Text (ST).
+- The first two rungs of the program appear to be non-functional test or diagnostic logic, as they perform a long series of AND operations that do not result in any output.
+- The 10-second delay between opening a valve and starting the pump is a standard and important safety feature in fluid handling automation.
+*)
+VAR
+    (* Local variables from POU 'WATER' *)
+    HLCW AT %I00057 : BOOL := TRUE; (* high level from cool water tank *)
+    HLV_WTR AT %I00056 : BOOL; (* high level from water tank *)
+    LOW_WTR AT %I00055 : BOOL; (* lowe level from water tank *)
+    LVL_OK AT %M00279 : BOOL;
+    OV_HL AT %I00058 : BOOL; (* over high level to water tank *)
+    P4023 AT %M00023 : BOOL; (* water pamp *)
+    PMP_STR AT %M00276 : BOOL;
+    STR2TK1 AT %M00273 : BOOL;
+    STR2TK4 AT %M00275 : BOOL;
+    TMR1 AT %R00500 : ARRAY[0..3] OF WORD;
+    TMR2 AT %R00503 : ARRAY[0..3] OF WORD;
+    TMR3 AT %R00506 : ARRAY[0..3] OF WORD;
+    TO_CW AT %M00271 : BOOL; (* water to CW tank *)
+    WTNK_OK AT %M00270 : BOOL; (* water tank ok *)
+    WTR2TK1 AT %M00272 : BOOL := TRUE;
+    WTR2TK4 AT %M00274 : BOOL;
+    XV4021 AT %M00021 : BOOL; (* cool water valve *)
+    XV4022 AT %M00022 : BOOL; (* water to CIP valve *)
+    XV4024 AT %M00024 : BOOL; (* WATER TO TANK CLEAR *)
+
+    (* Timer function block instances *)
+    TMR1_instance : TON;
+    TMR2_instance : TON;
+    TMR3_instance : TON;
+END_VAR
+
+VAR_GLOBAL
+    "#ALW_OFF" AT %S00008 : BOOL; (* Always OFF *)
+    "#ALW_ON" AT %S00007 : BOOL; (* Always ON *)
+    I00077 AT %I00077 : BOOL;
+    P4023 AT %Q00023 : BOOL; (* Water Pump *)
+    P4071 AT %Q00071 : BOOL; (* ASID DOSING PUMP TO "RUN" *)
+    Q00073 AT %Q00073 : BOOL;
+    STOPALL AT %M00104 : BOOL; (* Stop all processes *)
+    XV4021 AT %Q00021 : BOOL; (* Cool water valve *)
+    XV4022 AT %Q00022 : BOOL; (* water to CIP valve *)
+    XV4024 AT %Q00024 : BOOL; (* WATER TO TANK CLEAR *)
+    XV4043 AT %Q00043 : BOOL; (* STEAM TO EXCHENGER OF CIP "B" *)
+    XV4044 AT %Q00044 : BOOL; (* 3-WAY VALVE FROM HEATING CIPS " *)
+    XV4059 AT %Q00059 : BOOL; (* FROM CIPS "C" TO WASTE *)
+    XVM044 AT %M00044 : BOOL; (* 3-WAY VALVE FROM HEATING CIPS " *)
+	Rung1_Helper : BOOL;
+    Rung2_Helper : BOOL;
+END_VAR
+
+(* Rung 1: Assigns the first part of the condition to a helper variable. *)
+Rung1_Helper := LOW_WTR AND HLV_WTR AND HLCW AND OV_HL AND I00077 AND XV4021 AND XV4022 AND P4023 AND XV4024;
+
+(* Rung 2: Uses the result of Rung 1 to complete the logic and assign to a final helper variable. *)
+Rung2_Helper := Rung1_Helper AND XV4043 AND XV4044 AND XV4059 AND P4071 AND Q00073;
+
+(*
+ * Block Instruction Analysis: TMR_TENTHS
+ * The mnemonic instruction 'TMR_TENTHS' is a non-standard timer block.
+ * It is being interpreted as a standard IEC 61131-3 On-Delay Timer (TON).
+ * The preset time (PV) value from the mnemonic code, which is specified in
+ * tenths of a second, is converted to the standard TIME format (e.g., T#300s).
+ * The coil following the timer block is energized by the timers primary
+ * boolean output (.Q), which becomes TRUE when the timer has elapsed.
+*)
+(* Rung 3 *)
+TMR3_instance(
+    IN:= "#ALW_OFF" AND LOW_WTR,
+    PT:= T#300S
+);
+LVL_OK := TMR3_instance.Q;
+
+(* Rung 4: water tank ok *)
+WTNK_OK := HLV_WTR OR LVL_OK;
+
+(* Rung 5 *)
+STR2TK4 := "#ALW_ON" AND WTNK_OK AND WTR2TK4 AND NOT TO_CW AND NOT STR2TK1;
+
+(* Rung 6: water to CW tank *)
+TMR1_instance(
+    IN:= "#ALW_ON" AND NOT OV_HL AND WTNK_OK AND NOT HLCW AND NOT STR2TK1 AND NOT STR2TK4,
+    PT:= T#60S
+);
+TO_CW := TMR1_instance.Q;
+
+(* Rung 7 *)
+STR2TK1 := "#ALW_ON" AND WTNK_OK AND WTR2TK1 AND NOT TO_CW AND NOT STR2TK4;
+
+(* Rung 8: cool water valve *)
+XV4021 := "#ALW_ON" AND TO_CW AND NOT STOPALL;
+
+(* Rung 9: water to CIP valve *)
+XV4022 := ("#ALW_ON" AND (STR2TK1 OR STR2TK4)) AND NOT STOPALL;
+
+(* Rung 10 *)
+TMR2_instance(
+    IN:= ("#ALW_ON" AND (TO_CW OR STR2TK1 OR STR2TK4)) AND NOT STOPALL,
+    PT:= T#10S
+);
+PMP_STR := TMR2_instance.Q;
+
+(* Rung 11: water pamp *)
+P4023 := "#ALW_ON" AND PMP_STR AND NOT STOPALL;
+
+(* Rung 12: WATER TO TANK CLEAR *)
+XV4024 := "#ALW_ON" AND STR2TK1 AND NOT STOPALL;
+
+(* Rung 13: 3-WAY VALVE FROM HEATING CIPS " *)
+XVM044 := "#ALW_ON" AND STR2TK4 AND NOT STOPALL;

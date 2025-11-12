@@ -1,0 +1,173 @@
+(*!
+@purpose
+This program (`A_U_ST.txt`) is responsible for creating a comprehensive status word for the Cleaning-In-Place (CIP) A-line process. It aggregates numerous individual boolean status flags into a single integer variable (`A_STAT`). This integer provides a compact and efficient way to communicate the complete state of the CIP A line to external systems like an HMI or SCADA.
+
+The program constructs the status word by:
+1.  Assigning a base value to indicate the current active stage (1 for Stage 1, 2 for Stage 2, 3 for Stage 3).
+2.  Setting specific bits within the integer to represent various states (e.g., Stopped, Alarm, Ended, Ready).
+3.  Adding the current reactor number to the final value, embedding the target vessel information directly into the status word.
+
+@inputs
+- `A1_STRT` (BOOL): Boolean flag indicating if Stage 1 is active.
+- `A2_STRT` (BOOL): Boolean flag indicating if Stage 2 is active.
+- `A3_STRT` (BOOL): Boolean flag indicating if Stage 3 is active.
+- `A_STOP` (BOOL): Flag indicating the process is stopped.
+- `A_ALARM` (BOOL): Flag indicating an alarm condition.
+- `A_END` (BOOL): Flag indicating the process has completed.
+- `A_FILLS` (BOOL): Flag related to the filling status of the reactor.
+- `A_FULL` (BOOL): Flag related to the filling status of the reactor.
+- `A_REAC_num_` (INT): The number of the reactor currently being serviced by CIP A.
+
+@outputs
+- `A_STAT` (INT): The final, consolidated status integer. Its value is interpreted as follows:
+    - **Lower 4 bits (0-15):** Represent the active stage (1, 2, or 3).
+    - **Bit 5 (Value 16):** Set if `A_STOP` is TRUE.
+    - **Bit 6 (Value 32):** Set if `A_END` is TRUE.
+    - **Bit 7 (Value 64):** Set if the system is idle/ready (not filling, not full, no stage active, not ended).
+    - **Bit 8 (Value 128):** Set if `A_ALARM` is TRUE.
+    - **Higher bits:** The reactor number is added to this value. For example, a status of `1 + 16 + 256` would mean Stage 1, Stopped, for Reactor #1 (assuming reactor numbers start at 256).
+
+@notes
+- This code is for a GE/Emerson RX3i PLC and is written in Structured Text (ST).
+- The use of bitwise OR operations (`OR 16`, `OR 128`, etc.) is a standard and efficient method for building status words in PLC programming.
+- The final addition of `A_REAC_num_` is a clever way to merge two pieces of information (state and location) into a single integer for transmission.
+*)
+VAR_GLOBAL
+	A1_STRT AT %M00132 : BOOL; (* CIP A stage 1 started *)
+	A2_STRT AT %M00133 : BOOL; (* CIP A stage 2 started *)
+	A3_STRT AT %M00134 : BOOL; (* CIP A Stage 3 started *)
+	A_ALARM AT %M00170 : BOOL; (* CIP A in alarm state. *)
+	A_END AT %M00131 : BOOL; (* CIP A ended and/or stage 3 ended *)
+	A_FILLS AT %M00135 : BOOL; (* CIP A fills the reactor *)
+	A_FULL AT %M00141 : BOOL; (* CIP A filled reactor *)
+	A_REAC_num_ AT %R00130 : INT; (* Current Reactor number for CIP A *)
+	A_STAT AT %R09047 : INT; (* CIP A Status *)
+	A_STOP AT %M00130 : BOOL; (* CIP A stopped *)
+	AUX1 AT %R00102 : ARRAY[0..4] OF WORD; (* Temp register 1 *)
+END_VAR
+
+(* Rung 1: Temp register 1 *)
+(*
+* Block Instruction Analysis: AND_WORD
+* Operation: Performs a bitwise AND operation.
+* Input 1: A_STAT (Current value of CIP A Status).
+* Input 2: 15 (Integer constant, binary 0000_1111).
+* Output: AUX1[0].
+* Outcome: This instruction isolates the lower 4 bits of the A_STAT register
+* and stores the result in the temporary register AUX1[0],
+* effectively clearing all higher bits.
+*)
+AUX1[0] := A_STAT AND 15;
+
+(* Rung 2: Temp register 1 *)
+IF A1_STRT THEN
+	(*
+	* Block Instruction Analysis: MOVE_INT
+	* Operation: Moves an integer value if the preceding logic is true.
+	* Source: 1 (Integer constant).
+	* Destination: AUX1[0].
+	* Outcome: If A1_STRT is TRUE, the value of AUX1[0] will be set to 1,
+	* overwriting its previous contents.
+	*)
+	AUX1[0] := 1;
+END_IF;
+
+(* Rung 3: Temp register 1 *)
+IF A2_STRT THEN
+	(*
+	* Block Instruction Analysis: MOVE_INT
+	* Operation: Moves an integer value if the preceding logic is true.
+	* Source: 2 (Integer constant).
+	* Destination: AUX1[0].
+	* Outcome: If A2_STRT is TRUE, the value of AUX1[0] will be set to 2,
+	* overwriting its previous contents.
+	*)
+	AUX1[0] := 2;
+END_IF;
+
+(* Rung 4: Temp register 1 *)
+IF A3_STRT THEN
+	(*
+	* Block Instruction Analysis: MOVE_INT
+	* Operation: Moves an integer value if the preceding logic is true.
+	* Source: 3 (Integer constant).
+	* Destination: AUX1[0].
+	* Outcome: If A3_STRT is TRUE, the value of AUX1[0] will be set to 3,
+	* overwriting its previous contents.
+	*)
+	AUX1[0] := 3;
+END_IF;
+
+(* Rung 5: Temp register 1 *)
+IF A_STOP THEN
+	(*
+	* Block Instruction Analysis: BIT_SET_WORD
+	* Operation: Sets a specific bit within a WORD to 1.
+	* Target Word: AUX1[0].
+	* Bit to Set: 5 (This corresponds to a bitmask value of 16, i.e., 2^(5-1)).
+	* Outcome: If A_STOP is TRUE, bit 5 of AUX1[0] is set to 1 by performing
+	* a bitwise OR with the value 16.
+	*)
+	AUX1[0] := AUX1[0] OR 16;
+END_IF;
+
+(* Rung 6: Temp register 1 *)
+IF A_ALARM THEN
+	(*
+	* Block Instruction Analysis: BIT_SET_WORD
+	* Operation: Sets a specific bit within a WORD to 1.
+	* Target Word: AUX1[0].
+	* Bit to Set: 8 (This corresponds to a bitmask value of 128, i.e., 2^(8-1)).
+	* Outcome: If A_ALARM is TRUE, bit 8 of AUX1[0] is set to 1 by performing
+	* a bitwise OR with the value 128.
+	*)
+	AUX1[0] := AUX1[0] OR 128;
+END_IF;
+
+(* Rung 7: Temp register 1 *)
+IF A_END THEN
+	(*
+	* Block Instruction Analysis: BIT_SET_WORD
+	* Operation: Sets a specific bit within a WORD to 1.
+	* Target Word: AUX1[0].
+	* Bit to Set: 6 (This corresponds to a bitmask value of 32, i.e., 2^(6-1)).
+	* Outcome: If A_END is TRUE, bit 6 of AUX1[0] is set to 1 by performing
+	* a bitwise OR with the value 32.
+	*)
+	AUX1[0] := AUX1[0] OR 32;
+END_IF;
+
+(* Rung 8: Temp register 1 *)
+IF NOT A_FILLS AND NOT A_FULL AND NOT A1_STRT AND NOT A_END THEN
+	(*
+	* Block Instruction Analysis: BIT_SET_WORD
+	* Operation: Sets a specific bit within a WORD to 1.
+	* Target Word: AUX1[0].
+	* Bit to Set: 7 (This corresponds to a bitmask value of 64, i.e., 2^(7-1)).
+	* Outcome: If the logical condition is met, bit 7 of AUX1[0] is set to 1
+	* by performing a bitwise OR with the value 64.
+	*)
+	AUX1[0] := AUX1[0] OR 64;
+END_IF;
+
+(* Rung 9: CIP A Status *)
+(*
+* Block Instruction Analysis: MOVE_INT
+* Operation: Moves an integer value.
+* Source: AUX1[0] (The temporary register containing the calculated status word).
+* Destination: A_STAT.
+* Outcome: The value calculated in AUX1[0] throughout the previous rungs
+* is written to the final status register A_STAT.
+*)
+A_STAT := AUX1[0];
+(*
+* Block Instruction Analysis: ADD_INT
+* Operation: Adds two integer values.
+* Input 1: A_STAT (The value just moved from AUX1[0]).
+* Input 2: A_REAC_num_ (Current Reactor number for CIP A).
+* Output: A_STAT.
+* Outcome: The current reactor number is added to the status word, and the
+* result is stored back into A_STAT. This combines the status flags
+* with the reactor identifier.
+*)
+A_STAT := A_STAT + A_REAC_num_;

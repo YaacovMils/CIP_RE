@@ -1,0 +1,89 @@
+(*
+* @purpose: Handles incoming EGD (Ethernet Global Data) communication from an external controller (R20).
+*           This file unpacks a single WORD (%R09600) into individual BOOL tags that represent commands,
+*           status, and interlocks for the main CIP "D" sequence. It serves as the primary interface
+*           for receiving external control signals.
+* @platform: GE/Emerson RX3i PLC
+* @language: Structured Text (ST)
+*
+* @inputs:
+*   Rx_R20_Bits (%R09600) (WORD): The raw 16-bit register received via EGD, containing packed boolean data.
+*   Rx_R20_Steper (%R09601) (ARRAY[1..16] OF WORD): An array of words received via EGD, likely containing sequence step parameters or state information.
+*
+* @outputs:
+*   Live_Bit (%M00808) (BOOL): A heartbeat bit used to monitor the communication link's health. Toggles on and off.
+*   Rx_Abord (%M00810) (BOOL): Command to immediately abort the active CIP sequence.
+*   Rx_CipNoFlood (%M00811) (BOOL): An interlock signal to prevent flooding conditions during a CIP cycle.
+*   Rx_Cooker_Fault (%M00805) (BOOL): A fault signal received from an external "Cooker" unit.
+*   Rx_Cooker_RST (%M00806) (BOOL): A command to reset faults related to the external "Cooker" unit.
+*   Rx_Cooker_Switch (%M00807) (BOOL): Status of the external "Cooker" unit's mode or selection switch.
+*   Rx_Hold_CIP_Pump (%M00802) (BOOL): Command to pause or hold the main CIP pump (P4169).
+*   Rx_Hold_D_SEQ (%M00803) (BOOL): Command to pause the main "D" CIP sequence.
+*   Rx_LSL1 (%M00801) (BOOL): Status of a low-level switch (LSL1), used as a critical process interlock.
+*   Rx_Reset_SEQ (%M00809) (BOOL): Command to reset the main "D" CIP sequence to its initial state.
+*   Rx_Start_CIP_D (%M00804) (BOOL): Command to start the main "D" CIP sequence.
+*
+* @notes: The logic in this file consists of direct bit-unpacking. Each boolean tag is mapped to a specific
+*         bit (%X0, %X1, etc.) of the incoming Rx_R20_Bits register. The MOVE operation on Rx_R20_Steper
+*         is a no-op, likely intended to ensure the tag is present in the PLC's communication map.
+*)
+VAR_GLOBAL
+    Live_Bit AT %M00808 : BOOL; (* סיבית חיים (Live bit) *)
+    Rx_Abord AT %M00810 : BOOL; (* מיקום סיבית (Bit Location) *)
+    Rx_CipNoFlood AT %M00811 : BOOL; (* מיקום סיבית (Bit Location) *)
+    Rx_Cooker_Fault AT %M00805 : BOOL; (* מיקום סיבית (Bit Location) *)
+    Rx_Cooker_RST AT %M00806 : BOOL; (* מיקום סיבית (Bit Location) *)
+    Rx_Cooker_Switch AT %M00807 : BOOL; (* מיקום סיבית (Bit Location) *)
+    Rx_Hold_CIP_Pump AT %M00802 : BOOL; (* מיקום סיבית (Bit Location) *)
+    Rx_Hold_D_SEQ AT %M00803 : BOOL; (* מיקום סיבית (Bit Location) *)
+    Rx_LSL1 AT %M00801 : BOOL; (* מיקום סיבית (Bit Location) *)
+    Rx_R20_Bits AT %R09600 : WORD; (* תקשורת מהבקר (Communication from the controller) *)
+    Rx_R20_Steper AT %R09601 : ARRAY [1..16] OF WORD; (* תקשורת לבקר (Communication to the controller) *)
+    Rx_Reset_SEQ AT %M00809 : BOOL; (* מיקום סיבית (Bit Location) *)
+    Rx_Start_CIP_D AT %M00804 : BOOL; (* מיקום סיבית (Bit Location) *)
+END_VAR
+
+(* Rung 1 - **********************************************
+   Rx   R20
+ ********************************************** *)
+
+(* Rung 2 - COMMENT3 *)
+
+(* Rung 3 - מיקום סיבית (Bit Location) *)
+Rx_LSL1 := Rx_R20_Bits.%X0;
+Rx_Hold_CIP_Pump := Rx_R20_Bits.%X1;
+Rx_Hold_D_SEQ := Rx_R20_Bits.%X2;
+Rx_Start_CIP_D := Rx_R20_Bits.%X3;
+Rx_Cooker_Fault := Rx_R20_Bits.%X4;
+Rx_Cooker_RST := Rx_R20_Bits.%X5;
+Rx_Cooker_Switch := Rx_R20_Bits.%X6;
+Live_Bit := Rx_R20_Bits.%X7;
+Rx_Reset_SEQ := Rx_R20_Bits.%X8;
+Rx_Abord := Rx_R20_Bits.%X9;
+Rx_CipNoFlood := Rx_R20_Bits.%X10;
+%M812 := Rx_R20_Bits.%X11;
+%M813 := Rx_R20_Bits.%X12;
+%M814 := Rx_R20_Bits.%X13;
+%M815 := Rx_R20_Bits.%X14;
+%M816 := Rx_R20_Bits.%X15;
+
+(* Rung 4 *)
+(* This rung's logic is not connected to an output and has no effect. *)
+
+(* Rung 5 - COMMENT4 *)
+
+(* Rung 6 - תקשורת לבקר (Communication to the controller) *)
+(*
+ * Block Instruction: MOVE_WORD
+ * Moves a block of 16-bit words from a source to a destination.
+ * Note: The source and destination for this operation are identical, resulting in no change to the data.
+ *
+ * Source:      Rx_R20_Steper (starting at %R09601)
+ * Destination: Rx_R20_Steper (starting at %R09601)
+ * Length:      16 words
+ *
+ * Address Range:
+ * - Reads 16 words from %R09601 to %R09616.
+ * - Writes 16 words to %R09601 to %R09616.
+*)
+Rx_R20_Steper := Rx_R20_Steper;

@@ -1,0 +1,41 @@
+(*!
+@purpose
+This program (`DO_TANK.txt`, short for "Digital Output Tank" or "Do Tank Logic") is a master organizational routine that groups and executes all the sub-programs related to the CIP supply tanks. It does not contain any process logic itself but serves to structure the execution of the tank farm control logic.
+
+Its sole function is to call the individual tank control and monitoring programs in a fixed, deterministic order during each PLC scan cycle.
+
+The execution sequence is:
+1.  `LVL_DLY()`: A utility that likely handles time delays for level alarms to prevent nuisance trips from splashing.
+2.  `T1_WTR()`: The main logic for the Fresh Water Tank (Tank 1).
+3.  `T2_RWTR()`: The main logic for the Recovery Water Tank (Tank 2).
+4.  `T3_ACID()`: The main logic for the Acid Tank (Tank 3).
+5.  `T45SODA()`: The main logic for the Soda Tanks (Tanks 4 and 5).
+
+@inputs
+- This program has no direct inputs; it calls subroutines that interact with global variables.
+
+@outputs
+- This program has no direct outputs; it calls subroutines that interact with global variables.
+
+@notes
+- This code is for a GE/Emerson RX3i PLC and is written in Structured Text (ST).
+- This program is a key example of the structured, modular design of the PLC codebase. Grouping related subroutines under a single master call (`_Main.txt` calls `DO_TNK`, which then calls the individual tank programs) makes the overall program flow much easier to follow and maintain.
+*)
+PROGRAM DO_TNK
+
+(* Rung 1 *)
+LVL_DLY();
+
+(* Rung 2 *)
+T1_WTR();
+
+(* Rung 3 *)
+T2_RWTR();
+
+(* Rung 4 *)
+T3_ACID();
+
+(* Rung 5 *)
+T45SODA();
+
+END_PROGRAM

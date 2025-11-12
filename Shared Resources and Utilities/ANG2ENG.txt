@@ -1,0 +1,415 @@
+(*!
+@purpose
+This program (`ANG2ENG.txt`) is responsible for handling the conversion of raw analog input signals into meaningful engineering units. It reads integer values from various analog input modules (`%AI`) representing physical properties like conductivity and temperature, scales them according to predefined ranges, and outputs the calculated values to global registers (`%R`) for use in other logic programs.
+
+The core function is to translate the raw PLC count (e.g., 0-32000) from a sensor into a human-readable engineering value (e.g., 0-200 mS/cm for conductivity, 0-100 °C for temperature).
+
+@inputs
+- `AIT1005` (%AI0005) (INT): Raw analog input for Soda Tank 1/2 conductivity.
+- `AIT1006` (%AI0006) (INT): Raw analog input for Acid Tank conductivity.
+- `AIT1010` (%AI0010) (INT): Raw analog input for CIP Line A return conductivity.
+- `AIT1011` (%AI0011) (INT): Raw analog input for CIP Line B return conductivity.
+- `AIT1012` (%AI0012) (INT): Raw analog input for CIP Line C return conductivity.
+- `TT1002` (%AI0002) (INT): Raw analog input for Acid Tank temperature.
+- `TT1003` (%AI0003) (INT): Raw analog input for Soda Tank 1 temperature.
+- `FQC1007` (%AI0007) (ARRAY OF WORD): Raw analog input for CIP Line C flow meter.
+
+@outputs
+- `C_A_CLC` (%R00124) (INT): Calculated conductivity for CIP Line A.
+- `C_B_CLC` (%R00125) (INT): Calculated conductivity for CIP Line B.
+- `C_C_CLC` (%R00126) (INT): Calculated conductivity for CIP Line C.
+- `C_3_CLC` (%R00120) (INT): Calculated conductivity for the Acid Tank.
+- `C_45CLC` (%R00119) (INT): Calculated conductivity for the Soda Tanks.
+- `T_3_CLC` (%R00116) (INT): Calculated temperature for the Acid Tank.
+- `T_4_CLC` (%R00117) (INT): Calculated temperature for Soda Tank 1.
+- `T_5_CLC` (%R00118) (INT): Calculated temperature for Soda Tank 2.
+- `A_FLOW` (%R09006) (ARRAY OF WORD): Scaled flow rate for CIP Line C.
+
+@notes
+- This code is for a GE/Emerson RX3i PLC and is written in Structured Text (ST).
+- The program uses a temporary DINT variable (`temp_DINT_for_AUX1`) overlaid on a WORD array (`AUX1`) to perform 32-bit multiplication and division for scaling, a common technique in PLCs with limited direct support for complex math on mixed data types.
+- Many rungs contain logic that is permanently disabled (`IF _ALW_OFF THEN...`), which may be leftover from development or testing and is not currently active.
+- The scaling logic is repetitive for each sensor, suggesting a standardized hardware and scaling configuration.
+*)
+VAR_GLOBAL
+	_ALW_OFF AT %S00008 : BOOL; (* Always OFF *)
+	_ALW_ON AT %S00007 : BOOL; (* Always ON *)
+	AIT1005 AT %AI0005 : INT; (* SODA TANK 1,2 CONDUCTIVITY *)
+	AIT1006 AT %AI0006 : INT; (* ASID TANK CONDUCTIVITY *)
+	AIT1010 AT %AI0010 : INT; (* CIP "A" CONDUCTIVITY *)
+	AIT1011 AT %AI0011 : INT; (* CIP "B" CONDUCTIVITY *)
+	AIT1012 AT %AI0012 : INT; (* CIP "C" CONDUCTIVITY *)
+	AUX1 AT %R00102 : ARRAY[0..4] OF WORD; (* Temp register 1 *)
+	AUX3 AT %R00104 : DINT; (* Temp register 3 *)
+	C_3_CLC AT %R00120 : INT; (* Calculated Cond in ACID brl *)
+	C_45CLC AT %R00119 : INT; (* Calculated Cond in SODA 1/2 brl *)
+	C_A_CLC AT %R00124 : INT; (* Calculated CIP A conductivity *)
+	C_B_CLC AT %R00125 : INT; (* Calculated CIP B conductivity *)
+	C_C_CLC AT %R00126 : INT; (* Calculated CIP C conductivity *)
+	FQC1007 AT %AI0007 : ARRAY[0..3] OF WORD; (* CIP "C" FLOW *)
+	R00420 AT %R00420 : REAL; (* No description provided *)
+	R09001 AT %R09001 : INT; (* No description provided *)
+	R09002 AT %R09002 : INT; (* No description provided *)
+	R09003 AT %R09003 : INT; (* No description provided *)
+	R09004 AT %R09004 : INT; (* No description provided *)
+	R09005 AT %R09005 : INT; (* No description provided *)
+	R09009 AT %R09009 : INT; (* No description provided *)
+	R09010 AT %R09010 : INT; (* No description provided *)
+	R09011 AT %R09011 : INT; (* No description provided *)
+	T_3_CLC AT %R00116 : INT; (* Calculated Temp in ACID brl *)
+	T_4_CLC AT %R00117 : INT; (* Calculated Temp in SODA1 brl *)
+	T_5_CLC AT %R00118 : INT; (* Calculated Temp in SODA2 brl *)
+	TT1002 AT %AI0002 : INT; (* ASID TANK TEMPERATURE *)
+	TT1003 AT %AI0003 : INT; (* SODA TANK 1 TEMPERATURE *)
+	A_FLOW AT %R09006 : ARRAY[0..3] OF WORD; (* A flow meter *)
+	temp_DINT_for_AUX1 AT %R00102 : DINT; (* Helper variable for DINT operations on the memory occupied by AUX1. *)
+END_VAR
+
+(* Rung 1: COMMENT0 *)
+
+(* Rung 2: Temp register 1 *)
+(* Block Instruction Analysis: BLK_CLR_WORD
+ * This instruction clears a block of WORDs (16-bit registers) to zero.
+ * Length: 4 words
+ * Destination: Starts at variable AUX1, memory address %R00102.
+ * This will set the memory range %R00102 to %R00105 to zero. *)
+AUX1[0] := 0;
+AUX1[1] := 0;
+AUX1[2] := 0;
+AUX1[3] := 0;
+(* Block Instruction Analysis: MOVE_INT
+ * Source: Variable AIT1010 at memory address %AI0010.
+ * Destination: Variable AUX1[0] at memory address %R00102. *)
+AUX1[0] := AIT1010;
+(* Block Instruction Analysis: MOVE_INT
+ * Source: Constant value 200.
+ * Destination: Variable AUX1[2] at memory address %R00104. *)
+AUX1[2] := 200;
+
+(* Rung 3: Temp register 1 *)
+(* The following operations perform 32-bit (DINT) arithmetic on the memory
+ * location starting at AUX1 (%R00102), using a helper variable for clarity. *)
+temp_DINT_for_AUX1 := temp_DINT_for_AUX1 * AUX3;
+temp_DINT_for_AUX1 := temp_DINT_for_AUX1 / 32000;
+
+(* Rung 4: Calculated CIP A conductivity *)
+(* Block Instruction Analysis: MOVE_INT
+ * Source: Variable AUX1[0] at memory address %R00102.
+ * Destination: Variable C_A_CLC at memory address %R00124. *)
+C_A_CLC := AUX1[0];
+(* Block Instruction Analysis: MOVE_INT
+ * Source: Variable C_A_CLC at memory address %R00124.
+ * Destination: Variable R09009 at memory address %R09009. *)
+R09009 := C_A_CLC;
+
+(* Rung 5: COMMENT1 *)
+
+(* Rung 6: Temp register 1 *)
+(* Block Instruction Analysis: BLK_CLR_WORD
+ * This instruction clears a block of WORDs (16-bit registers) to zero.
+ * Length: 4 words
+ * Destination: Starts at variable AUX1, memory address %R00102.
+ * This will set the memory range %R00102 to %R00105 to zero. *)
+AUX1[0] := 0;
+AUX1[1] := 0;
+AUX1[2] := 0;
+AUX1[3] := 0;
+(* Block Instruction Analysis: MOVE_INT
+ * Source: Variable AIT1011 at memory address %AI0011.
+ * Destination: Variable AUX1[0] at memory address %R00102. *)
+AUX1[0] := AIT1011;
+(* Block Instruction Analysis: MOVE_INT
+ * Source: Constant value 200.
+ * Destination: Variable AUX1[2] at memory address %R00104. *)
+AUX1[2] := 200;
+
+(* Rung 7: Temp register 1 *)
+(* The following operations perform 32-bit (DINT) arithmetic on the memory
+ * location starting at AUX1 (%R00102), using a helper variable for clarity. *)
+temp_DINT_for_AUX1 := temp_DINT_for_AUX1 * AUX3;
+temp_DINT_for_AUX1 := temp_DINT_for_AUX1 / 32000;
+
+(* Rung 8: Calculated CIP B conductivity *)
+(* Block Instruction Analysis: MOVE_INT
+ * Source: Variable AUX1[0] at memory address %R00102.
+ * Destination: Variable C_B_CLC at memory address %R00125. *)
+C_B_CLC := AUX1[0];
+(* Block Instruction Analysis: MOVE_INT
+ * Source: Variable C_B_CLC at memory address %R00125.
+ * Destination: Variable R09010 at memory address %R09010. *)
+R09010 := C_B_CLC;
+
+(* Rung 9: COMMENT2 *)
+
+(* Rung 10: Temp register 1 *)
+(* Block Instruction Analysis: BLK_CLR_WORD
+ * This instruction clears a block of WORDs (16-bit registers) to zero.
+ * Length: 4 words
+ * Destination: Starts at variable AUX1, memory address %R00102.
+ * This will set the memory range %R00102 to %R00105 to zero. *)
+AUX1[0] := 0;
+AUX1[1] := 0;
+AUX1[2] := 0;
+AUX1[3] := 0;
+(* Block Instruction Analysis: MOVE_INT
+ * Source: Variable AIT1012 at memory address %AI0012.
+ * Destination: Variable AUX1[0] at memory address %R00102. *)
+AUX1[0] := AIT1012;
+(* Block Instruction Analysis: MOVE_INT
+ * Source: Constant value 200.
+ * Destination: Variable AUX1[2] at memory address %R00104. *)
+AUX1[2] := 200;
+
+(* Rung 11: Temp register 1 *)
+(* The following operations perform 32-bit (DINT) arithmetic on the memory
+ * location starting at AUX1 (%R00102), using a helper variable for clarity. *)
+temp_DINT_for_AUX1 := temp_DINT_for_AUX1 * AUX3;
+temp_DINT_for_AUX1 := temp_DINT_for_AUX1 / 32000;
+
+(* Rung 12: Calculated CIP C conductivity *)
+(* Block Instruction Analysis: MOVE_INT
+ * Source: Variable AUX1[0] at memory address %R00102.
+ * Destination: Variable C_C_CLC at memory address %R00126. *)
+C_C_CLC := AUX1[0];
+(* Block Instruction Analysis: MOVE_INT
+ * Source: Variable C_C_CLC at memory address %R00126.
+ * Destination: Variable R09011 at memory address %R09011. *)
+R09011 := C_C_CLC;
+
+(* Rung 13: COMMENT3 *)
+
+(* Rung 14: Temp register 1 *)
+(* Block Instruction Analysis: BLK_CLR_WORD
+ * This instruction clears a block of WORDs (16-bit registers) to zero.
+ * Length: 4 words
+ * Destination: Starts at variable AUX1, memory address %R00102.
+ * This will set the memory range %R00102 to %R00105 to zero. *)
+AUX1[0] := 0;
+AUX1[1] := 0;
+AUX1[2] := 0;
+AUX1[3] := 0;
+(* Block Instruction Analysis: MOVE_INT
+ * Source: Variable AIT1005 at memory address %AI0005.
+ * Destination: Variable AUX1[0] at memory address %R00102. *)
+AUX1[0] := AIT1005;
+(* Block Instruction Analysis: MOVE_INT
+ * Source: Constant value 1000.
+ * Destination: Variable AUX1[2] at memory address %R00104. *)
+AUX1[2] := 1000;
+
+(* Rung 15: Temp register 1 *)
+(* The following operations perform 32-bit (DINT) arithmetic on the memory
+ * location starting at AUX1 (%R00102), using a helper variable for clarity. *)
+temp_DINT_for_AUX1 := temp_DINT_for_AUX1 * AUX3;
+temp_DINT_for_AUX1 := temp_DINT_for_AUX1 / 32000;
+
+(* Rung 16: Calculated Cond in SODA 1/2 brl *)
+IF _ALW_ON AND NOT _ALW_OFF THEN
+	(* Block Instruction Analysis: MOVE_INT
+	 * Source: Variable AUX1[0] at memory address %R00102.
+	 * Destination: Variable C_45CLC at memory address %R00119. *)
+	C_45CLC := AUX1[0];
+	R09004 := AIT1005 / 32;
+END_IF;
+
+(* Rung 17: COMMENT4 *)
+
+(* Rung 18 *)
+IF _ALW_OFF THEN
+	R00420 := INT_TO_REAL(AIT1006);
+END_IF;
+
+(* Rung 19 *)
+IF _ALW_OFF THEN
+	R00420 := (R00420 * 10000.0) / 32000.0;
+END_IF;
+
+(* Rung 20: Calculated Cond in ACID brl *)
+IF _ALW_OFF THEN
+	C_3_CLC := TRUNC(R00420);
+END_IF;
+
+(* Rung 21: Temp register 1 *)
+(* Block Instruction Analysis: BLK_CLR_WORD
+ * This instruction clears a block of WORDs (16-bit registers) to zero.
+ * Length: 4 words
+ * Destination: Starts at variable AUX1, memory address %R00102.
+ * This will set the memory range %R00102 to %R00105 to zero. *)
+AUX1[0] := 0;
+AUX1[1] := 0;
+AUX1[2] := 0;
+AUX1[3] := 0;
+(* Block Instruction Analysis: MOVE_INT
+ * Source: Variable AIT1006 at memory address %AI0006.
+ * Destination: Variable AUX1[0] at memory address %R00102. *)
+AUX1[0] := AIT1006;
+(* Block Instruction Analysis: MOVE_INT
+ * Source: Constant value 10000.
+ * Destination: Variable AUX1[2] at memory address %R00104. *)
+AUX1[2] := 10000;
+
+(* Rung 22: Temp register 1 *)
+(* The following operations perform 32-bit (DINT) arithmetic on the memory
+ * location starting at AUX1 (%R00102), using a helper variable for clarity. *)
+temp_DINT_for_AUX1 := temp_DINT_for_AUX1 * AUX3;
+temp_DINT_for_AUX1 := temp_DINT_for_AUX1 / 32000;
+
+(* Rung 23: Calculated Cond in ACID brl *)
+(* Block Instruction Analysis: MOVE_INT
+ * Source: Variable AUX1[0] at memory address %R00102.
+ * Destination: Variable C_3_CLC at memory address %R00120. *)
+C_3_CLC := AUX1[0];
+(* Block Instruction Analysis: MOVE_INT
+ * Source: Variable C_3_CLC at memory address %R00120.
+ * Destination: Variable R09005 at memory address %R09005. *)
+R09005 := C_3_CLC;
+
+(* Rung 24: COMMENT5 *)
+
+(* Rung 25: Temp register 1 *)
+(* Block Instruction Analysis: BLK_CLR_WORD
+ * This instruction clears a block of WORDs (16-bit registers) to zero.
+ * Length: 4 words
+ * Destination: Starts at variable AUX1, memory address %R00102.
+ * This will set the memory range %R00102 to %R00105 to zero. *)
+AUX1[0] := 0;
+AUX1[1] := 0;
+AUX1[2] := 0;
+AUX1[3] := 0;
+(* Block Instruction Analysis: MOVE_INT
+ * Source: Variable TT1002 at memory address %AI0002.
+ * Destination: Variable AUX1[0] at memory address %R00102. *)
+AUX1[0] := TT1002;
+(* Block Instruction Analysis: MOVE_INT
+ * Source: Constant value 100.
+ * Destination: Variable AUX1[2] at memory address %R00104. *)
+AUX1[2] := 100;
+
+(* Rung 26: Temp register 1 *)
+(* The following operations perform 32-bit (DINT) arithmetic on the memory
+ * location starting at AUX1 (%R00102), using a helper variable for clarity. *)
+temp_DINT_for_AUX1 := temp_DINT_for_AUX1 * AUX3;
+temp_DINT_for_AUX1 := temp_DINT_for_AUX1 / 32000;
+
+(* Rung 27: Calculated Temp in ACID brl *)
+(* Block Instruction Analysis: MOVE_INT
+ * Source: Variable AUX1[0] at memory address %R00102.
+ * Destination: Variable T_3_CLC at memory address %R00116. *)
+T_3_CLC := AUX1[0];
+(* Block Instruction Analysis: MOVE_INT
+ * Source: Variable T_3_CLC at memory address %R00116.
+ * Destination: Variable R09001 at memory address %R09001. *)
+R09001 := T_3_CLC;
+
+(* Rung 28: AI3 0-200 Soda Temperature *)
+
+(* Rung 29: Temp register 1 *)
+(* Block Instruction Analysis: BLK_CLR_WORD
+ * This instruction clears a block of WORDs (16-bit registers) to zero.
+ * Length: 4 words
+ * Destination: Starts at variable AUX1, memory address %R00102.
+ * This will set the memory range %R00102 to %R00105 to zero. *)
+AUX1[0] := 0;
+AUX1[1] := 0;
+AUX1[2] := 0;
+AUX1[3] := 0;
+(* Block Instruction Analysis: MOVE_INT
+ * Source: Variable TT1003 at memory address %AI0003.
+ * Destination: Variable AUX1[0] at memory address %R00102. *)
+AUX1[0] := TT1003;
+(* Block Instruction Analysis: MOVE_INT
+ * Source: Constant value 200.
+ * Destination: Variable AUX1[2] at memory address %R00104. *)
+AUX1[2] := 200;
+
+(* Rung 30: Temp register 1 *)
+(* The following operations perform 32-bit (DINT) arithmetic on the memory
+ * location starting at AUX1 (%R00102), using a helper variable for clarity. *)
+temp_DINT_for_AUX1 := temp_DINT_for_AUX1 * AUX3;
+temp_DINT_for_AUX1 := temp_DINT_for_AUX1 / 32000;
+
+(* Rung 31: Calculated Temp in SODA1 brl *)
+(* Block Instruction Analysis: MOVE_INT
+ * Source: Variable AUX1[0] at memory address %R00102.
+ * Destination: Variable T_4_CLC at memory address %R00117. *)
+T_4_CLC := AUX1[0];
+(* Block Instruction Analysis: MOVE_INT
+ * Source: Variable T_4_CLC at memory address %R00117.
+ * Destination: Variable R09002 at memory address %R09002. *)
+R09002 := T_4_CLC;
+
+(* Rung 32: 28/12/2023 Canceled ************************************Soda Tank 2 ****************** *)
+
+(* Rung 33: Temp register 1 *)
+(* Block Instruction Analysis: BLK_CLR_WORD
+ * This instruction clears a block of WORDs (16-bit registers) to zero.
+ * Length: 4 words
+ * Destination: Starts at variable AUX1, memory address %R00102.
+ * This will set the memory range %R00102 to %R00105 to zero. *)
+AUX1[0] := 0;
+AUX1[1] := 0;
+AUX1[2] := 0;
+AUX1[3] := 0;
+(* Block Instruction Analysis: MOVE_INT
+ * Source: Variable TT1003 at memory address %AI0003.
+ * Destination: Variable AUX1[0] at memory address %R00102. *)
+AUX1[0] := TT1003;
+(* Block Instruction Analysis: MOVE_INT
+ * Source: Constant value 200.
+ * Destination: Variable AUX1[2] at memory address %R00104. *)
+AUX1[2] := 200;
+
+(* Rung 34: Temp register 1 *)
+(* The following operations perform 32-bit (DINT) arithmetic on the memory
+ * location starting at AUX1 (%R00102), using a helper variable for clarity. *)
+temp_DINT_for_AUX1 := temp_DINT_for_AUX1 * AUX3;
+temp_DINT_for_AUX1 := temp_DINT_for_AUX1 / 31950;
+
+(* Rung 35: Calculated Temp in SODA2 brl *)
+(* Block Instruction Analysis: MOVE_INT
+ * Source: Variable AUX1[0] at memory address %R00102.
+ * Destination: Variable T_5_CLC at memory address %R00118. *)
+T_5_CLC := AUX1[0];
+(* Block Instruction Analysis: MOVE_INT
+ * Source: Variable T_5_CLC at memory address %R00118.
+ * Destination: Variable R09003 at memory address %R09003. *)
+R09003 := T_5_CLC;
+
+(* Rung 36: A flow meter *)
+IF _ALW_OFF THEN
+	(* Block Instruction Analysis: MOVE_INT
+	 * Source: Variable FQC1007 at memory address %AI0007.
+	 * Destination: Variable A_FLOW at memory address %R09006.
+	 * Address Range: The instruction reads 3 words from the source address range %AI0007 to %AI0009 and writes them to the destination address range %R09006 to %R09008. *)
+	A_FLOW[0] := FQC1007[0];
+	A_FLOW[1] := FQC1007[1];
+	A_FLOW[2] := FQC1007[2];
+END_IF;
+
+(* Rung 37: A flow meter *)
+(* Block Instruction Analysis: MOVE_INT
+ * Source: Variable FQC1007[0] at memory address %AI0007.
+ * Destination: Variable A_FLOW[0] at memory address %R09006. *)
+A_FLOW[0] := FQC1007[0];
+A_FLOW[0] := A_FLOW[0] / 1;
+A_FLOW[0] := A_FLOW[0] * 1;
+
+(* Rung 38: A flow meter *)
+IF _ALW_OFF THEN
+	(* Block Instruction Analysis: MOVE_INT
+	 * Source: Variable FQC1007[1] at memory address %AI0008.
+	 * Destination: Variable A_FLOW[1] at memory address %R09007. *)
+	A_FLOW[1] := FQC1007[1];
+	A_FLOW[1] := A_FLOW[1] / 1;
+	A_FLOW[1] := A_FLOW[1] * 1;
+END_IF;
+
+(* Rung 39: A flow meter *)
+IF _ALW_OFF THEN
+	(* Block Instruction Analysis: MOVE_INT
+	 * Source: Variable FQC1007[2] at memory address %AI0009.
+	 * Destination: Variable A_FLOW[2] at memory address %R09008. *)
+	A_FLOW[2] := FQC1007[2];
+	A_FLOW[2] := A_FLOW[2] / 1;
+	A_FLOW[2] := A_FLOW[2] * 1;
+END_IF;

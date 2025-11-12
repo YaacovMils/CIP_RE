@@ -1,0 +1,83 @@
+(*!
+@purpose
+This program (`LVL_DLY.txt`) provides a simple time-based delay for latching the state of various level switches. The primary purpose is to debounce the inputs and prevent false trips that could be caused by splashing or turbulence within the tanks, especially right after the PLC starts up.
+
+The logic creates a 5-second delay upon PLC startup. Only after this delay has elapsed does the program begin copying the state of the physical level switch inputs to their corresponding internal memory flags. This ensures that the system uses stable, settled level readings.
+
+@inputs
+- `#T_SEC` (BOOL): A 1-second system clock pulse used to drive the internal timer.
+- `LSH*` (%I addresses) (BOOL): A series of physical digital inputs from high-level switches.
+- `LSL*` (%I addresses) (BOOL): A series of physical digital inputs from low-level switches.
+- `SIM_ON` (BOOL): A boolean flag that, when TRUE, bypasses the startup delay for simulation or testing purposes.
+
+@outputs
+- `HILVL*` (%M addresses) (BOOL): A series of internal boolean flags representing the debounced state of the high-level switches.
+- `LOLVL*` (%M addresses) (BOOL): A series of internal boolean flags representing the debounced state of the low-level switches.
+
+@notes
+- This code is for a GE/Emerson RX3i PLC and is written in Structured Text (ST).
+- The original comments are in Hebrew, with "השהיה" meaning "Delay", "גובה גבוה" meaning "High Level", and "גובה נמוך" meaning "Low Level".
+- The timer is implemented using a simple integer counter incremented by a 1-second clock pulse, which is a common and resource-efficient way to create simple timers in PLCs.
+- The logic as written provides a startup delay but does not provide a continuous debounce (e.g., an ON-delay or OFF-delay) for the level switches during normal operation.
+*)
+VAR_GLOBAL
+	HILVL1 AT %M00114 : BOOL; (* השהיה - גובה גבוה *)
+	HILVL2 AT %M00116 : BOOL; (* השהיה - גובה גבוה מאוד *)
+	LOLVL3 AT %M00119 : BOOL; (* השהיה-גובה נמוך *)
+	LOLVL4 AT %M00112 : BOOL; (* השהיה-גובה נמוך מאוד *)
+	LOLVL5 AT %M00121 : BOOL; (* השהיה - גובה נמוך מאוד *)
+	LSH3070 AT %I00070 : BOOL; (* מתג גובה גבוה *)
+	LSH3074 AT %I00074 : BOOL; (* מתג גובה גבוה מאד *)
+	LSL3067 AT %I00067 : BOOL; (* מתג גובה נמוך מאד *)
+	LSL3078 AT %I00078 : BOOL; (* מתג גובה נמוך *)
+	LSL3081 AT %I00081 : BOOL; (* מתג גובה נמוך מאד נוסף *)
+	LVLTMR AT %R00210 : ARRAY [0..3] OF INT; (* טיימרים להשהיות גובה *)
+	SIM_ON AT %M00100 : BOOL; (* הפעלת סימולציה *)
+	#T_SEC AT %S00005 : BOOL; (* 1 Second Clock Pulse *)
+	T00001 AT %T00001 : BOOL; (* Internal Bit *)
+	T00002 AT %T00002 : BOOL; (* Internal Bit *)
+END_VAR
+
+VAR
+	RTrig_Counter_Enable : R_TRIG;
+END_VAR
+
+(* Rung 1: Internal Bit *)
+T00001 := (LVLTMR[0] >= 5);
+
+(* Rung 2: Internal Bit *)
+RTrig_Counter_Enable(CLK := #T_SEC);
+
+(* Reset counter when T00001 is TRUE *)
+IF T00001 THEN
+    LVLTMR[0] := 0;
+END_IF;
+IF RTrig_Counter_Enable.Q THEN
+    (* Increment counter on rising edge of #T_SEC *)
+    IF LVLTMR[0] < 5 THEN
+        LVLTMR[0] := LVLTMR[0] + 1;
+    END_IF;
+END_IF;
+
+(* Output is TRUE when counter >= preset *)
+T00002 := (LVLTMR[0] >= 5);
+
+
+(* Rung 3: השהיה-גובה נמוך מאוד *)
+IF T00002 OR SIM_ON THEN
+    LOLVL4 := LSL3067;
+	HILVL5 := LSH3068;
+	
+    HILVL1 := LSH3070;
+	LOLVL1 := LSL3071;
+
+    HILVL2 := LSH3074;
+	LOLVL2 := LSL3075;
+	HILVL3 := LSH3076;
+
+(* Rung 4: *)
+    LOLVL3 := LSL3078;
+	HILVL4 := LSH3079;
+
+    LOLVL5 := LSL3081;
+END_IF;

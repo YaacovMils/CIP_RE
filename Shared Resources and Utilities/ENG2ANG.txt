@@ -1,0 +1,282 @@
+(*!
+@purpose
+This program (`ENG2ANG.txt`) performs the reverse operation of `ANG2ENG.txt`. It takes calculated engineering unit values (e.g., conductivity, temperature) and un-scales them back into the raw integer format (0-32000) that is typically associated with a PLC's analog I/O channels.
+
+The purpose of this "reverse scaling" is unconventional and is likely intended for one of the following:
+1.  **Simulation:** To write a calculated value back to a memory location that is also mapped to a physical analog input (`%AI`). This allows the program to simulate sensor readings for testing the logic without needing live physical signals.
+2.  **Data Transmission:** To format data for an external system (perhaps an older PLC or HMI) that expects to receive process values in their raw, un-scaled integer format.
+3.  **Display Consistency:** To provide a raw value on the HMI for diagnostic purposes, displayed alongside the scaled engineering unit.
+
+@inputs
+- `C_A_CLC`, `C_B_CLC`, `C_C_CLC`: Calculated conductivity values for the CIP return lines.
+- `C_3_CLC`, `C_45CLC`: Calculated conductivity values for the Acid and Soda tanks.
+- `T_3_CLC`, `T_4_CLC`, `T_5_CLC`: Calculated temperature values for the Acid and Soda tanks.
+
+@outputs
+- `AIT1010`, `AIT1011`, `AIT1012`: These variables, which are also mapped to physical analog inputs, are written to with the un-scaled conductivity values for the CIP lines.
+- `AIT1006`: Un-scaled conductivity for the Acid tank.
+- `TT1002`, `TT1003`, `TT1004`: Un-scaled temperature values for the tanks.
+
+@notes
+- This code is for a GE/Emerson RX3i PLC and is written in Structured Text (ST).
+- The program's name and function strongly imply a role in simulation or data formatting, as writing to `%AI` memory locations is not typical for standard control logic.
+- Much of the logic in this file is disabled with `#ALW_OFF` conditions, suggesting that many of these un-scaling operations are not currently active in the running process.
+- The use of a DINT overlay (`AUX1_DINT`) on a WORD array (`AUX1`) is a common technique for performing 32-bit math in this PLC environment.
+*)
+VAR_GLOBAL
+    #ALW_OFF AT %S00008 : BOOL; (* Always OFF *)
+    #ALW_ON AT %S00007 : BOOL; (* Always ON *)
+    AIT1005 AT %AI0005 : INT; (* SODA TANK 1,2 CONDUCTIVITY *)
+    AIT1006 AT %AI0006 : INT; (* ASID TANK CONDUCTIVITY *)
+    AIT1010 AT %AI0010 : INT; (* CIP "A" CONDUCTIVITY *)
+    AIT1011 AT %AI0011 : INT; (* CIP "B" CONDUCTIVITY *)
+    AIT1012 AT %AI0012 : INT; (* CIP "C" CONDUCTIVITY *)
+    AUX1 AT %R00102 : ARRAY[0..4] OF WORD; (* Temp register 1 *)
+    AUX1_DINT AT %R00102 : DINT; (* DINT overlay for AUX1 - same memory *)
+    AUX3 AT %R00104 : DINT; (* Temp register 3 *)
+    C_3_CLC AT %R00120 : INT; (* Calculated Cond in ACID brl *)
+    C_45CLC AT %R00119 : INT; (* Calculated Cond in SODA 1/2 brl *)
+    C_A_CLC AT %R00124 : INT; (* Calculated CIP A conductivity *)
+    C_B_CLC AT %R00125 : INT; (* Calculated CIP B conductivity *)
+    C_C_CLC AT %R00126 : INT; (* Calculated CIP C conductivity *)
+    R00420 AT %R00420 : REAL;
+    R00422 AT %R00422 : INT;
+    R01420 AT %R01420 : REAL;
+    R09001 AT %R09001 : INT;
+    R09002 AT %R09002 : INT;
+    R09004 AT %R09004 : INT;
+    R09005 AT %R09005 : INT;
+    R09009 AT %R09009 : INT;
+    R09010 AT %R09010 : INT;
+    R09011 AT %R09011 : INT;
+    T_3_CLC AT %R00116 : INT; (* Calculated Temp in ACID brl *)
+    T_4_CLC AT %R00117 : INT; (* Calculated Temp in SODA1 brl *)
+    T_5_CLC AT %R00118 : INT; (* Calculated Temp in SODA2 brl *)
+    TT1002 AT %AI0002 : INT; (* ASID TANK TEMPERATURE *)
+    TT1003 AT %AI0003 : INT; (* SODA TANK 1 TEMPERATURE *)
+    TT1004 AT %AI0004 : INT; (* SODA TANK 2 TEMPERATURE *)
+END_VAR
+
+(* ============================================ *)
+(* Rung 1: COMMENT0                            *)
+(* ============================================ *)
+
+(* ============================================ *)
+(* Rung 2: CIP "A" - Initialize AUX1           *)
+(* ============================================ *)
+AUX1[0] := 0;
+AUX1[1] := 0;
+AUX1[2] := 0;
+AUX1[3] := 0;
+AUX1[0] := C_A_CLC;
+AUX1[2] := 32000;
+
+(* ============================================ *)
+(* Rung 3: CIP "A" - DINT arithmetic           *)
+(* ============================================ *)
+AUX1_DINT := (AUX1_DINT * AUX3) / 200;
+
+(* ============================================ *)
+(* Rung 4: CIP "A" CONDUCTIVITY                *)
+(* ============================================ *)
+IF #ALW_OFF THEN
+    AIT1010 := AUX1[0];
+    R09009 := C_A_CLC;
+END_IF;
+
+(* ============================================ *)
+(* Rung 5: COMMENT1                            *)
+(* ============================================ *)
+
+(* ============================================ *)
+(* Rung 6: CIP "B" - Initialize AUX1           *)
+(* ============================================ *)
+AUX1[0] := 0;
+AUX1[1] := 0;
+AUX1[2] := 0;
+AUX1[3] := 0;
+AUX1[0] := C_B_CLC;
+AUX1[2] := 32000;
+
+(* ============================================ *)
+(* Rung 7: CIP "B" - DINT arithmetic           *)
+(* ============================================ *)
+AUX1_DINT := (AUX1_DINT * AUX3) / 200;
+
+(* ============================================ *)
+(* Rung 8: CIP "B" CONDUCTIVITY                *)
+(* ============================================ *)
+AIT1011 := AUX1[0];
+R09010 := C_B_CLC;
+
+(* ============================================ *)
+(* Rung 9: COMMENT2                            *)
+(* ============================================ *)
+
+(* ============================================ *)
+(* Rung 10: CIP "C" - Initialize AUX1          *)
+(* ============================================ *)
+AUX1[0] := 0;
+AUX1[1] := 0;
+AUX1[2] := 0;
+AUX1[3] := 0;
+AUX1[0] := C_C_CLC;
+AUX1[2] := 32000;
+
+(* ============================================ *)
+(* Rung 11: CIP "C" - DINT arithmetic          *)
+(* ============================================ *)
+AUX1_DINT := (AUX1_DINT * AUX3) / 200;
+
+(* ============================================ *)
+(* Rung 12: CIP "C" CONDUCTIVITY               *)
+(* ============================================ *)
+AIT1012 := AUX1[0];
+R09011 := C_C_CLC;
+
+(* ============================================ *)
+(* Rung 13: COMMENT3                           *)
+(* ============================================ *)
+
+(* ============================================ *)
+(* Rung 14: SODA 1/2 - Initialize AUX1         *)
+(* ============================================ *)
+AUX1[0] := 0;
+AUX1[1] := 0;
+AUX1[2] := 0;
+AUX1[3] := 0;
+AUX1[0] := C_45CLC;
+AUX1[2] := 32000;
+
+(* ============================================ *)
+(* Rung 15: SODA 1/2 - DINT arithmetic         *)
+(* ============================================ *)
+AUX1_DINT := (AUX1_DINT * AUX3) / 200;
+
+(* ============================================ *)
+(* Rung 16: SODA TANK 1,2 CONDUCTIVITY         *)
+(* ============================================ *)
+IF NOT #ALW_OFF THEN
+    R09004 := AIT1005 / 16;
+END_IF;
+
+(* ============================================ *)
+(* Rung 17: COMMENT4                           *)
+(* ============================================ *)
+
+(* ============================================ *)
+(* Rung 18: ACID - Initialize AUX1             *)
+(* ============================================ *)
+IF NOT #ALW_OFF THEN
+    AUX1[0] := 0;
+    AUX1[1] := 0;
+    AUX1[2] := 0;
+    AUX1[3] := 0;
+    AUX1[0] := C_3_CLC;
+    AUX1[2] := 32000;
+END_IF;
+
+(* ============================================ *)
+(* Rung 19: ACID - DINT arithmetic (div 10000) *)
+(* ============================================ *)
+IF NOT #ALW_OFF THEN
+    AUX1_DINT := (AUX1_DINT * AUX3) / 10000;
+END_IF;
+
+(* ============================================ *)
+(* Rung 20: INT to REAL conversion             *)
+(* ============================================ *)
+R00420 := INT_TO_REAL(AIT1006);
+
+(* ============================================ *)
+(* Rung 21: REAL arithmetic operations         *)
+(* ============================================ *)
+R01420 := R00420 * 1000.0;
+R00420 := R00420 / 32000.0;
+
+(* ============================================ *)
+(* Rung 22: REAL to INT conversion             *)
+(* ============================================ *)
+R00422 := REAL_TO_INT(R00420);
+
+(* ============================================ *)
+(* Rung 23: ASID TANK CONDUCTIVITY             *)
+(* ============================================ *)
+AIT1006 := AIT1006;
+R09005 := C_3_CLC;
+
+(* ============================================ *)
+(* Rung 24: COMMENT5                           *)
+(* ============================================ *)
+
+(* ============================================ *)
+(* Rung 25: ACID TEMP - Initialize AUX1        *)
+(* ============================================ *)
+AUX1[0] := 0;
+AUX1[1] := 0;
+AUX1[2] := 0;
+AUX1[3] := 0;
+AUX1[0] := T_3_CLC;
+AUX1[2] := 32000;
+
+(* ============================================ *)
+(* Rung 26: ACID TEMP - DINT arithmetic        *)
+(* ============================================ *)
+AUX1_DINT := (AUX1_DINT * AUX3) / 150;
+
+(* ============================================ *)
+(* Rung 27: ASID TANK TEMPERATURE              *)
+(* ============================================ *)
+IF #ALW_ON AND NOT #ALW_OFF THEN
+    TT1002 := AUX1[0];
+    R09001 := T_3_CLC;
+END_IF;
+
+(* ============================================ *)
+(* Rung 28: COMMENT6                           *)
+(* ============================================ *)
+
+(* ============================================ *)
+(* Rung 29: SODA1 TEMP - Initialize AUX1       *)
+(* ============================================ *)
+AUX1[0] := 0;
+AUX1[1] := 0;
+AUX1[2] := 0;
+AUX1[3] := 0;
+AUX1[0] := T_4_CLC;
+AUX1[2] := 32000;
+
+(* ============================================ *)
+(* Rung 30: SODA1 TEMP - DINT arithmetic       *)
+(* ============================================ *)
+AUX1_DINT := (AUX1_DINT * AUX3) / 200;
+
+(* ============================================ *)
+(* Rung 31: SODA TANK 1 TEMPERATURE            *)
+(* ============================================ *)
+TT1003 := AUX1[0];
+R09002 := T_4_CLC;
+
+(* ============================================ *)
+(* Rung 32: COMMENT7                           *)
+(* ============================================ *)
+
+(* ============================================ *)
+(* Rung 33: SODA2 TEMP - Initialize AUX1       *)
+(* ============================================ *)
+AUX1[0] := 0;
+AUX1[1] := 0;
+AUX1[2] := 0;
+AUX1[3] := 0;
+AUX1[0] := T_5_CLC;
+AUX1[2] := 32000;
+
+(* ============================================ *)
+(* Rung 34: SODA2 TEMP - DINT arithmetic       *)
+(* ============================================ *)
+AUX1_DINT := (AUX1_DINT * AUX3) / 150;
+
+(* ============================================ *)
+(* Rung 35: SODA TANK 2 TEMPERATURE            *)
+(* ============================================ *)
+TT1004 := AUX1[0];

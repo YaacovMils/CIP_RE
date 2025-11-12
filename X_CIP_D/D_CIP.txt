@@ -1,0 +1,58 @@
+(*!
+@purpose
+This program (`D_CIP.txt`) serves as the master organizational routine for the entire "CIP D" process. It is a high-level container that does not contain any direct control logic itself. Instead, its sole responsibility is to call all the necessary sub-programs that make up the Line D control system in a specific, deterministic order.
+
+This structured approach is crucial for the stable and predictable operation of the complex Line D sequence.
+
+The execution order is as follows:
+1.  `D_AI()`, `D_AQ()`, `D_DI()`, `D_DQ()`: Handles all I/O processing first – reading and scaling inputs, preparing and scaling outputs.
+2.  `D_ERROR()`: Checks for and processes any error or fault conditions.
+3.  `D_STRCT()`: Executes the main sequencer logic that determines if the process should advance to the next step.
+4.  `D_GNACT()`: Based on the current step, this program energizes the required physical outputs (pumps, valves).
+5.  `TX_COMM()`, `RX_COMM()`: Manages EGD or other forms of communication with external systems.
+6.  `FQ()`: Performs flow rate and totalization calculations.
+7.  `D_OPER()`: Handles operator commands and status updates for the HMI.
+
+@inputs
+- This program has no direct inputs; it calls subroutines that interact with global variables.
+
+@outputs
+- This program has no direct outputs; it calls subroutines that interact with global variables.
+
+@notes
+- This code is for a GE/Emerson RX3i PLC and is written in Structured Text (ST).
+- This file is an excellent example of a structured, modular programming approach in a PLC environment. It acts as the "main" function for the entire Line D process, providing a clear and easy-to-follow overview of the program's scan cycle.
+- The order of execution is deliberate, ensuring that inputs are read before logic is executed, and logic is executed before outputs are written, which is a fundamental principle of robust PLC programming.
+*)
+(* Rung 1 *)
+D_AI();
+
+(* Rung 2 *)
+D_AQ();
+
+(* Rung 3 *)
+D_DI();
+
+(* Rung 4 *)
+D_DQ();
+
+(* Rung 5 *)
+D_ERROR();
+
+(* Rung 6 *)
+D_STRCT();
+
+(* Rung 7 *)
+D_GNACT();
+
+(* Rung 8 *)
+TX_COMM();
+
+(* Rung 9 *)
+RX_COMM();
+
+(* Rung 10 *)
+FQ();
+
+(* Rung 11 *)
+D_OPER();

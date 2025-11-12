@@ -1,0 +1,113 @@
+(*!
+@purpose
+This program (`D_DQ.txt`) serves as the digital output mapping layer for the "CIP D" process. It is the counterpart to `D_DI.txt` and its primary function is to translate internal software commands into physical hardware actions. It maps the internal memory bits (`%M` addresses), which represent the desired state of a device, to the physical digital output terminals (`%Q` addresses) that energize the solenoids, motor starters, and other field equipment.
+
+This abstraction layer is a fundamental best practice in PLC programming. The main control logic determines that a valve should open by setting an internal flag (e.g., `XV4108_Oper := TRUE;`). This program then takes that internal command and maps it to the physical output that is actually wired to the valve's solenoid.
+
+@inputs
+- `XV*_Oper` and `P*_Oper` variables (`%M` addresses): These are the internal memory flags that are set or cleared by the main control logic (e.g., in `D_GNACT.txt`). They represent the final calculated command for each device (e.g., "open valve XV-4108", "start pump P-4169").
+
+@outputs
+- `Q00116` through `Q00131`: These are the physical digital output channels on the PLC's output modules. Energizing one of these outputs sends voltage to a field device, causing it to actuate. For example:
+    - `Q00116` energizes the solenoid for valve XV-4108.
+    - `Q00127` energizes the motor starter for pump P-4169.
+
+@notes
+- This code is for a GE/Emerson RX3i PLC and is written in Structured Text (ST).
+- This program contains only direct one-to-one assignments and represents the final stage of the PLC's logic scan before the physical outputs are updated.
+- This file must be kept perfectly synchronized with the physical wiring of the control panel. If a device's wiring is moved to a different output terminal, a corresponding change must be made in this program.
+*)
+VAR_GLOBAL
+	Q00116 AT %Q00116 : BOOL; (*DO-4108 OUT*)
+	Q00117 AT %Q00117 : BOOL; (*DO-4106 OUT*)
+	Q00118 AT %Q00118 : BOOL; (*DO-4102 OUT*)
+	Q00119 AT %Q00119 : BOOL; (*DO-4104 OUT*)
+	Q00120 AT %Q00120 : BOOL; (*DO-4111 OUT*)
+	Q00121 AT %Q00121 : BOOL; (*DO-4125 OUT*)
+	Q00122 AT %Q00122 : BOOL; (*DO-4136 OUT*)
+	Q00123 AT %Q00123 : BOOL; (*DO-4134 OUT*)
+	Q00124 AT %Q00124 : BOOL; (*DO-4128 OUT*)
+	Q00125 AT %Q00125 : BOOL; (*DO-4131 OUT*)
+	Q00126 AT %Q00126 : BOOL; (*DO-4181 OUT*)
+	Q00127 AT %Q00127 : BOOL; (*DO-4169 OUT*)
+	Q00128 AT %Q00128 : BOOL; (*SPARE*)
+	Q00129 AT %Q00129 : BOOL; (*SPARE*)
+	Q00130 AT %Q00130 : BOOL; (*SPARE*)
+	Q00131 AT %Q00131 : BOOL; (*SPARE*)
+	XV4108_Oper AT %M00681 : BOOL; (*XV-4108 OPERATOR OPEN*)
+	XV4106_Oper AT %M00682 : BOOL; (*XV-4106 OPERATOR OPEN*)
+	XV4102_Oper AT %M00683 : BOOL; (*XV-4102 OPERATOR OPEN*)
+	XV4104_Oper AT %M00684 : BOOL; (*XV-4104 OPERATOR OPEN*)
+	XV4111_Oper AT %M00685 : BOOL; (*XV-4111 OPERATOR OPEN*)
+	XV4125_Oper AT %M00686 : BOOL; (*XV-4125 OPERATOR OPEN*)
+	XV4136_Oper AT %M00687 : BOOL; (*XV-4136 OPERATOR OPEN*)
+	XV4134_Oper AT %M00688 : BOOL; (*XV-4134 OPERATOR OPEN*)
+	XV4128_Oper AT %M00689 : BOOL; (*XV-4128 OPERATOR OPEN*)
+	XV4131_Oper AT %M00690 : BOOL; (*XV-4131 OPERATOR OPEN*)
+	XV4181_Oper AT %M00691 : BOOL; (*XV-4181 OPERATOR OPEN*)
+	P4169_Oper AT %M00692 : BOOL; (*P-4169 OPERATOR START*)
+END_VAR
+
+(* Rung 1: COMMENT0 *)
+
+(* Rung 2: COMMENT1 *)
+
+(* Rung 3: COMMENT2 *)
+
+(* Rung 4: DO-4108 OUT *)
+Q00116 := XV4108_Oper;
+
+(* Rung 5: COMMENT3 *)
+
+(* Rung 6: DO-4106 OUT *)
+Q00117 := XV4106_Oper;
+
+(* Rung 7: COMMENT4 *)
+
+(* Rung 8: DO-4102 OUT *)
+Q00118 := XV4102_Oper;
+
+(* Rung 9: COMMENT5 *)
+
+(* Rung 10: DO-4104 OUT *)
+Q00119 := XV4104_Oper;
+
+(* Rung 11: COMMENT6 *)
+
+(* Rung 12: DO-4111 OUT *)
+Q00120 := XV4111_Oper;
+
+(* Rung 13: COMMENT7 *)
+
+(* Rung 14: DO-4125 OUT *)
+Q00121 := XV4125_Oper;
+
+(* Rung 15: COMMENT8 *)
+
+(* Rung 16: DO-4136 OUT *)
+Q00122 := XV4136_Oper;
+
+(* Rung 17: COMMENT9 *)
+
+(* Rung 18: DO-4123 OUT *)
+Q00123 := XV4134_Oper;
+
+(* Rung 19: COMMENT10 *)
+
+(* Rung 20: DO-4128 OUT *)
+Q00124 := XV4128_Oper;
+
+(* Rung 21: COMMENT11 *)
+
+(* Rung 22: DO-4131 OUT *)
+Q00125 := XV4131_Oper;
+
+(* Rung 23: COMMENT12 *)
+
+(* Rung 24: DO-4181 OUT *)
+Q00126 := XV4181_Oper;
+
+(* Rung 25: COMMENT13 *)
+
+(* Rung 26: DO-4169 OUT *)
+Q00127 := P4169_Oper;

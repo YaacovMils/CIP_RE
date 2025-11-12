@@ -1,0 +1,292 @@
+(*!
+@purpose
+This program (`B_CIP_ST`) manages the detailed logic for executing the Cleaning-In-Place (CIP) process for Line B. It is responsible for selecting the appropriate cleaning/rinsing medium, controlling the filling of the target reactor, and routing the return flow based on conductivity measurements.
+
+The program operates in three main stages:
+1.  **Stage 1 (`B1_STRT`):** Pre-rinse, typically using recovered water (`B1USE_R`).
+2.  **Stage 2 (`B2_STRT`):** Chemical wash, using either soda (`B2USE_S`) or acid.
+3.  **Stage 3 (`B3_STRT`):** Final rinse, using fresh water.
+
+It checks conductivity to validate if the return solution from a chemical wash is within spec to be sent back to its source tank or if it should be sent to drain.
+
+@inputs
+- `B1_STRT` (BOOL), `B2_STRT` (BOOL), `B3_STRT` (BOOL): Boolean flags that activate Stage 1, 2, or 3 of the CIP sequence.
+- `B_STOP` (BOOL), `B_END` (BOOL): Global flags to stop or indicate the end of the Line B CIP process.
+- `B2USE_S` (BOOL): A flag to specify that the Stage 2 wash is using soda (if FALSE, it uses acid).
+- `T4ACTIV` (BOOL): A flag to select between two soda tanks (Soda 1 vs. Soda 2).
+- `C_B_CLC` (INT): The current calculated conductivity of the fluid returning from Line B.
+- `COND_3` (INT), `COND_45` (INT): The target conductivity setpoints for acid and soda solutions.
+- `R00450` (INT): The accumulated volume from the flowmeter for the current fill process.
+- `CIPBVOL` (INT): The target fill volume for the reactor.
+- `LSH*` flags (BOOL): High-level switch statuses for the Acid, Soda, and Recovery Water tanks.
+- `T*_BUSY` (BOOL): Flags indicating if source tanks (water, acid, etc.) are busy with another process.
+
+@outputs
+- `B_FILLS` (BOOL), `B_FULL` (BOOL): Status flags indicating the reactor is currently filling or has completed filling.
+- `ACID_OK` (BOOL), `SODA_OK` (BOOL), `WTR_OK` (BOOL): Flags indicating if the return fluid conductivity is acceptable.
+- `XVM003` / `XVM005` (BOOL): Commands to open return valves to Soda Tank 1 / Soda Tank 2.
+- `XVM007` (BOOL): Command to open the return valve to the Acid Tank.
+- `XVM009` (BOOL): Command to open the return valve to the Recovery Water Tank.
+- `XVM010` (BOOL): Command to open the return valve to the drain (Waste).
+- `XVM026` (BOOL): Command to open the supply valve from the Fresh Water Tank.
+- `XVM029` / `XVM032` (BOOL): Commands to open supply valves from Soda Tank 1 / Soda Tank 2.
+- `XVM035` (BOOL): Command to open the supply valve from the Acid Tank.
+- `XVM037` (BOOL): Command to open the supply valve from the Recovery Water Tank.
+- `XVM048` (BOOL): Command to open the main valve from the CIP skid to the reactors on Line B.
+- `P4M65` (BOOL): Command to start the Line B CIP supply pump.
+
+@notes
+- This code is for a GE/Emerson RX3i PLC and is written in Structured Text (ST).
+- The logic is very similar in structure and function to `A_CIP.txt`, indicating a templated or copied design pattern for different CIP lines.
+- The program's behavior is primarily dictated by external flags (`B1_STRT`, etc.), suggesting it is a sub-module within a larger state-machine architecture.
+- Timers are used to provide delays for mechanical actions.
+- The program resets all its internal state flags when the `B_END` flag is set.
+*)
+VAR_GLOBAL
+	// Local Variables from Interface
+	ACID_OK AT %T00004 : BOOL; (* Acid comes from reactor-end wash *)
+	CANFILL AT %T00001 : BOOL; (* Can fill reactor *)
+	CMDPLC4 AT %R07002 : INT;
+	PSB_WRK AT %M00250 : BOOL; (* pmp posibl work *)
+	RET_WAT AT %M00249 : BOOL;
+	SODA_OK AT %T00003 : BOOL; (* Soda comes from reactor-end wash *)
+	WTR_OK AT %T00002 : BOOL; (* CIP A receives clean water *)
+	_Bit AT %T00002 : BOOL; (* temporary bit *)
+	
+	// Global Variables from Interface
+	#ALW_OFF AT %S00008 : BOOL; (* Always OFF *)
+	#ALW_ON AT %S00007 : BOOL; (* Always ON *)
+	#T_SEC AT %S00005 : BOOL; (* 1.0 second timer contact *)
+	AUX1 AT %R00102 : ARRAY[0..4] OF WORD; (* Temp register 1 *)
+	B1_STRT AT %M00146 : BOOL; (* CIP B stage 1 started *)
+	B1USE_R AT %M00151 : BOOL; (* CIP B stage 1 use recov. water *)
+	B2_STRT AT %M00147 : BOOL; (* CIP B stage 2 started *)
+	B2USE_S AT %M00150 : BOOL; (* CIP B stage 2 use soda *)
+	B3_STRT AT %M00148 : BOOL; (* CIP B Stage 3 started *)
+	B_END AT %M00145 : BOOL; (* CIP B ended *)
+	B_FILLS AT %M00149 : BOOL; (* CIP B fills the ractor *)
+	B_FULL AT %M00152 : BOOL; (* CIP B filled a reactor *)
+	B_STOP AT %M00144 : BOOL; (* CIP B stopped *)
+	C_B_CLC AT %R00125 : INT; (* Calculated CIP B conductivity *)
+	CIPBCMD AT %R00588 : INT; (* CIP B command (0,1,2,3,4,5,6) *)
+	CIPBVOL AT %R00596 : INT; (* Volume of recator of CIP B *)
+	COND_3 AT %R00590 : INT; (* Required Conduct. in ACID barrel *)
+	COND_45 AT %R00592 : INT; (* Required Conduct in Soda 1/2 brl *)
+	FQCBPLS AT %M00102 : BOOL; (* FQC B pulse *)
+	LOLVL4 AT %M00112 : BOOL; (* Low level Soda1 *)
+	LSH3068 AT %I00068 : BOOL; (* SODA TANK 2 HIGH LEVEL *)
+	LSH3074 AT %I00074 : BOOL; (* WATER RECOVERY TANK HIGH LEVEL *)
+	LSH3076 AT %I00076 : BOOL; (* ASID TANK HIGH LEVEL *)
+	LSH3079 AT %I00079 : BOOL; (* SODA TANK 1 HIGH LEVEL *)
+	M00082 AT %M00082 : BOOL; (* XV4082 CIPB *)
+	M00220 AT %M00220 : BOOL;
+	M00221 AT %M00221 : BOOL;
+	M00222 AT %M00222 : BOOL;
+	M00305 AT %M00305 : BOOL;
+	M02050 AT %M02050 : BOOL; (* CIP Soda Tank2 Canceled *)
+	P4M65 AT %M00065 : BOOL; (* SIPS "B" PUMP TO "RUN" *)
+	R00430 AT %R00430 : ARRAY[0..3] OF WORD; (#TON)
+	R00433 AT %R00433 : ARRAY[0..3] OF WORD; (#TON)
+	R00436 AT %R00436 : INT;
+	R00450 AT %R00450 : INT;
+	R00536 AT %R00536 : ARRAY[0..64] OF WORD;
+	R00610 AT %R00610 : INT;
+	R09010 AT %R09010 : INT;
+	T1_BUSY AT %M00122 : BOOL; (* Water tank busy *)
+	T2_BUSY AT %M00123 : BOOL; (* Recovery water tank busy *)
+	T3_BUSY AT %M00124 : BOOL; (* Acid tank busy *)
+	T4ACTIV AT %M00127 : BOOL; (* Soda1(tnk 4) active,Soda2 passiv *)
+	XVM003 AT %M00003 : BOOL; (* XV4003 CIPR "B" Fill Soda1 Tank *)
+	XVM005 AT %M00005 : BOOL; (* XV4005 CIPR "B" Fill Soda2 Tank *)
+	XVM007 AT %M00007 : BOOL; (* CIPR "B" TO ASID TANK TO "OPEN" *)
+	XVM009 AT %M00009 : BOOL; (* XV4009 CIPR "B" Recovery Water Fill *)
+	XVM010 AT %M00010 : BOOL; (* XV4010 CIPR "B" TO WASTE *)
+	XVM020 AT %M00020 : BOOL; (* ASID VALVE TO ASID TANK TO "OP *)
+	XVM026 AT %M00026 : BOOL; (* FROM FRESH WATER TANK TO CIPS " *)
+	XVM029 AT %M00029 : BOOL; (* XV4029 CIPS "B" Soda1 Bottom *)
+	XVM032 AT %M00032 : BOOL; (* XV4032 CIPS "B" Soda Tank2 Bottom *)
+	XVM035 AT %M00035 : BOOL; (* FROM ASID TANK TO SIPS "B" TO " *)
+	XVM037 AT %M00037 : BOOL; (* XV4037 Recovery WaterTank Bottom *)
+	XVM048 AT %M00048 : BOOL; (* XV4048 CIP "B" Pump Discharge *)
+END_VAR
+
+(* Rung 1 *)
+
+ACID_OK := B2_STRT AND NOT B2USE_S AND NOT B_STOP AND NOT B_END AND (C_B_CLC >= (COND_3 - 0));
+
+(* Rung 2 *)
+SODA_OK := B2_STRT AND B2USE_S AND NOT B_STOP AND NOT B_END AND (C_B_CLC >= (COND_45 - 0));
+
+(* Rung 3 *)
+WTR_OK := B3_STRT AND NOT B_STOP AND NOT B_END AND (C_B_CLC < 20);
+
+(* Rung 4 *)
+IF (B1_STRT OR SODA_OK OR ACID_OK OR WTR_OK) AND NOT B_STOP AND NOT B_END AND NOT B_FULL THEN
+	B_FILLS := TRUE;
+END_IF;
+
+(* Rung 5 *)
+CANFILL := (B1_STRT AND (NOT T1_BUSY OR NOT T2_BUSY))
+			OR (B2_STRT AND (B2USE_S AND #ALW_ON AND (T4ACTIV OR NOT T4ACTIV)) OR NOT B2USE_S AND NOT T3_BUSY)
+			OR (B3_STRT AND NOT T1_BUSY)
+			AND NOT B_STOP AND NOT B_END
+
+(* Rung 6 *)
+_Bit := FQCBPLS AND CANFILL AND (B_FILLS OR B2_STRT) AND NOT #ALW_OFF AND (R00450 >= CIPBVOL)
+
+
+(* Rung 7 *)
+IF (_Bit AND NOT M00220) OR (#ALW_ON AND M00221 AND CANFILL AND #ALW_ON) THEN
+	B_FULL := TRUE;
+	B_FILLS := FALSE;
+END_IF;
+
+(* Rung 8 *)
+M00220 := #ALW_ON AND #ALW_ON AND (CIPBVOL = 0);
+
+(* Rung 9 *)
+Var
+	 RisingTrig : R_TRIG; // instance
+end_var
+RisingTrig(CLK := #ALW_ON AND #T_SEC AND NOT M00222);
+M00222 := RisingTrig.Q;
+
+(* Rung 10 *)
+(* Block Instruction Analysis: TMR_TENTHS
+* Timer with a 0.1-second interval.
+* Preset: 300 (30.0 seconds)
+*)
+R00433(IN := (#ALW_ON AND M00220 AND (R00536[1] > R00536[0])),
+	   PT := 30s
+	   );
+M00221 := R00433.Q;
+
+
+(* Rung 11 *)
+IF #ALW_ON AND M00221 THEN
+	R00436 := 0;
+END_IF;
+
+(* Rung 12 *)
+(* COMMENT0 *)
+
+(* Rung 13 *)
+IF B1_STRT AND NOT B_FULL AND NOT T2_BUSY THEN
+	B1USE_R := TRUE;
+END_IF;
+
+(* Rung 14 *)
+(* COMMENT1 *)
+
+(* Rung 15 *)
+_Bit:= #ALW_OFF AND XVM020 AND (CIPBCMD >= 1 AND CIPBCMD <= 7)
+	
+
+
+(* Rung 16 *)
+(* XV04026 *)
+
+(* Rung 17 *)
+XVM026 := CANFILL AND NOT B_FULL AND ((B1_STRT AND T2_BUSY) OR B3_STRT)) AND NOT T1_BUSY;
+
+(* Rung 18 *)
+(* XV4037 *)
+
+(* Rung 19 *)
+XVM037 := CANFILL AND NOT B_FULL AND B1_STRT AND NOT T2_BUSY;
+
+(* Rung 20 *)
+(* XV4029 Soda1 Bottom *)
+
+(* Rung 21 *)
+XVM029 := CANFILL AND NOT B_FULL AND B2_STRT AND B2USE_S AND T4ACTIV;
+
+(* Rung 22 *)
+(* XV4032 *)
+
+(* Rung 23 *)
+XVM032 := CANFILL AND NOT B_FULL AND B2_STRT AND B2USE_S AND NOT LOLVL4 AND M02050;
+
+(* Rung 24 *)
+(* XV4035 *)
+
+(* Rung 25 *)
+XVM035 := CANFILL AND NOT B_FULL AND B2_STRT AND NOT B2USE_S;
+
+(* Rung 26 *)
+(* *)
+
+(* Rung 27 *)
+PSB_WRK := (CMDPLC4 = 0);
+
+(* Rung 28 *)
+XVM048 := CANFILL AND NOT B_FULL AND (B1_STRT OR B2_STRT OR B3_STRT) ;
+_Bit := XVM048 AND PSB_WRK;
+
+(* Rung 29 *)
+R00430(IN := (_Bit),
+	   PT := 5s
+	   );
+M00221 := R00433.Q;
+P4M65 := _Bit
+
+(* Rung 30 *)
+IF ((XVM037) OR (XVM035) OR (XVM029) OR (XVM032)) AND #ALW_ON AND (R00430[0] >= 10) THEN
+	M00082 := TRUE;
+END_IF;
+
+(* Rung 31 *)
+IF NOT XVM037 AND NOT XVM035 AND NOT XVM029 AND NOT XVM032 THEN
+	M00082 := FALSE;
+END_IF;
+
+(* Rung 32 *)
+M00305 := #ALW_ON AND B2_STRT AND (R09010 >= R00610);
+
+(* Rung 33 *)
+(* XV4010 *)
+
+(* Rung 34 *)
+XVM010 := ((CANFILL AND NOT B_FILLS AND (B_FULL OR LSH3079) AND B2_STRT AND ((LSH3079 AND B2USE_S)
+																		   OR (LSH3068 AND NOT XVM003 AND B2USE_S)
+																		   OR (NOT B2USE_S AND LSH3076)))
+		  OR (B2_STRT AND LSH3079 AND NOT P4M65 AND LSH3068 AND B2USE_S)
+		  OR (B3_STRT AND LSH3074)
+		  OR (B1_STRT AND #ALW_ON AND (B1USE_R OR #ALW_ON) AND NOT B_STOP AND NOT B_END)
+		  OR (RET_WAT AND NOT XVM009)
+		  ) AND NOT XVM007;												
+																	
+
+(* Rung 35 *)
+(* XV4009 CIPR "B" Recovery Water Fill *)
+
+(* Rung 36 *)
+XVM009 := (NOT B_STOP AND NOT B_END AND B3_STRT AND NOT LSH3074) OR (RET_WAT AND NOT LSH3074);
+
+(* Rung 37 *)
+(* XV4003 CIPR "B" Fill Soda1 Tank *)
+
+(* Rung 38 *)
+XVM003 := B2_STRT AND NOT B_STOP AND NOT B_END AND B2USE_S AND T4ACTIV AND NOT LSH3079;
+
+(* Rung 39 *)
+(* XV4005 CIPR "B" Fill Soda2 Tank *)
+
+(* Rung 40 *)
+XVM005 := B2_STRT AND NOT B_STOP AND NOT B_END AND T4ACTIV AND NOT LSH3068 AND M02050;
+
+(* Rung 41 *)
+(* XV4007 *)
+XVM007 := (B2_STRT AND NOT B_STOP AND NOT B_END AND NOT B2USE_S) OR (#ALW_OFF AND RET_WAT AND NOT LSH3076 AND NOT #ALW_OFF);
+
+(* Rung 42 *)
+(* CIP B ended *)
+
+(* Rung 43 *)
+IF B_END THEN
+	B_FILLS := FALSE;
+	B_FULL := FALSE;
+	B1_STRT := FALSE;
+	B2_STRT := FALSE;
+	B3_STRT := FALSE;
+END_IF;

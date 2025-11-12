@@ -1,0 +1,144 @@
+(*!
+@purpose
+This program (`A_FQC.txt`) is responsible for monitoring the flow rates of the three main CIP pumps (A, B, and C) and generating alarms if a low-flow condition is detected. It serves as a critical safety and process monitoring function to ensure that fluid is moving as expected when a pump is active.
+
+Its primary functions are:
+1.  **Flow Rate Calculation:** For pumps A and B, it measures the time between pulses from a flow meter (`FQCAPLS`, `FQCBPLS`) to calculate an instantaneous flow rate.
+2.  **Low-Flow Alarm Generation:** It uses ON-delay timers (`TON`) to check if a pump is running (`P4069`, `P4065`, `P4M66`) but the corresponding flow rate is below a minimum threshold (1000 units). If this condition persists for a configurable time (`PMPAPRD`), it sets an alarm flag (`A_ALARM`, `B_ALARM`, `C_ALARM`).
+3.  **Alarm Bit Aggregation:** It copies the individual timer-done bits, which represent the alarm statuses, into a specific bit range within a global alarm WORD (`ALRM_96`), likely for communication to an HMI or SCADA system.
+
+@inputs
+- `P4069` (BOOL): Physical output signal indicating that the CIP A pump is commanded to run.
+- `P4065` (BOOL): Physical output signal indicating that the CIP B pump is commanded to run.
+- `P4M66` (BOOL): Internal flag indicating the CIP C pump is commanded to run.
+- `FQCAPLS` (BOOL): Pulse input from the flow meter for CIP line A.
+- `FQCBPLS` (BOOL): Pulse input from the flow meter for CIP line B.
+- `FQC1007` (WORD): Raw analog input for CIP Line C flow.
+- `PMPAPRD` (INT): An integer representing the time delay in tenths of a second for the low-flow alarm to trigger.
+
+@outputs
+- `A_ALARM` (BOOL): Alarm flag for CIP Line A low flow.
+- `B_ALARM` (BOOL): Alarm flag for CIP Line B low flow.
+- `C_ALARM` (BOOL): Alarm flag for CIP Line C low flow.
+- `R09006` (ARRAY OF WORD): Calculated instantaneous flow rates for lines A and B.
+- `ALARM_WORD_4` (WORD): A specific word in the alarm register block (`%R9040` area) where the individual alarm bits are stored for external monitoring.
+
+@notes
+- This code is for a GE/Emerson RXi PLC and is written in Structured Text (ST).
+- The flow calculation for C appears to be handled differently or is incomplete, as it uses a direct analog value rather than a pulse count and its alarm rung is disabled (`#ALW_OFF`).
+- The logic for calculating flow from pulses involves measuring the duration of the OFF period between pulses and then performing a division, which is a common method for frequency-based flow calculation in PLCs.
+*)
+VAR_GLOBAL
+	#ALW_OFF AT %S00008 : BOOL; (* Always OFF *)
+	#ALW_ON AT %S00007 : BOOL; (* Always ON *)
+	A_ALARM AT %M00170 : BOOL; (* CIP A in alarm state. *)
+	ALRM_96 AT %R09040 : WORD; (* Valve 1-80 alarm,+ 16 status *)
+	ALARM_WORD_4 AT %R9044 : WORD; (* Added based on analysis of Rung 10 destination address *)
+	B_ALARM AT %M00171 : BOOL; (* CIP B in alarm state. *)
+	C_ALARM AT %M00172 : BOOL; (* CIP C in alarm state. *)
+	FQC1007 AT %AI0007 : ARRAY[0..3] OF WORD; (* CIP "C" FLOW *)
+	FQCAPLS AT %M00101 : BOOL; (* FQC A Pulse *)
+	FQCBPLS AT %M00102 : BOOL; (* FQC B pulse *)
+	LST_TMR AT %R00417 : ARRAY[0..3] OF WORD; (* Last Alarm Timer *)
+	P4065 AT %Q00065 : BOOL; (* SIPS "B" PUMP TO "RUN" *)
+	P4069 AT %Q00069 : BOOL; (* CIPS "A" PUMP TO "RUN" *)
+	P4M66 AT %M00066 : BOOL; (* SIPS "C" PUMP TO "RUN" *)
+	PMPAPRD AT %R00004 : INT; (* Pump alarm time period. *)
+	R00611 AT %R00611 : ARRAY[0..3] OF WORD;
+	R00614 AT %R00614 : INT;
+	R00615 AT %R00615 : INT;
+	R00616 AT %R00616 : ARRAY[0..3] OF WORD;
+	R00619 AT %R00619 : INT;
+	R00620 AT %R00620 : INT;
+	R09006 AT %R09006 : ARRAY[0..3] OF WORD;
+	T00001 AT %T00001 : BOOL;
+	T00002 AT %T00002 : BOOL;
+	T00003 AT %T00003 : BOOL;
+	TMRA038 AT %R00411 : ARRAY[0..3] OF WORD; (* Alarm timer 038 *)
+	TMRA039 AT %R00414 : ARRAY[0..3] OF WORD; (* Alarm timer 039 *)
+END_VAR
+
+VAR
+	TON_1_TMRA038 : TON;
+	TON_2_R00611 : TON;
+	TON_5_TMRA039 : TON;
+	TON_6_R00616 : TON;
+	TON_9_LST_TMR : TON;
+END_VAR
+
+(* Rung 1: CIP A in alarm state. *)
+TON_1_TMRA038(IN := (P4069 AND #ALW_ON AND (R09006[1] < 1000)), PT := INT_TO_TIME(PMPAPRD * 100));
+T00001 := TON_1_TMRA038.Q;
+IF T00001 THEN
+	A_ALARM := TRUE;
+END_IF;
+
+(* Rung 2: Rung 2 *)
+TON_2_R00611(IN := (P4069 AND NOT FQCAPLS), PT := INT_TO_TIME(0 * 100));
+IF TON_2_R00611.Q THEN
+	R00614 := WORD_TO_INT(R00611[0]);
+END_IF;
+
+(* Rung 3: Rung 3 *)
+IF #ALW_ON AND NOT P4069 THEN
+	R09006[1] := 0;
+END_IF;
+
+(* Rung 4: Rung 4 *)
+IF #ALW_ON AND FQCAPLS THEN
+	R00615 := 18000 / R00614;
+	R00615 := R00615 * 20;
+	R09006[1] := INT_TO_WORD(R00615);
+END_IF;
+
+(* Rung 5: CIP B in alarm state. *)
+TON_5_TMRA039(IN := (P4065 AND #ALW_ON AND (R09006[2] < 1000)), PT := INT_TO_TIME(PMPAPRD * 100));
+T00002 := TON_5_TMRA039.Q;
+IF T00002 THEN
+	B_ALARM := TRUE;
+END_IF;
+
+(* Rung 6: Rung 6 *)
+TON_6_R00616(IN := (P4065 AND NOT FQCBPLS), PT := INT_TO_TIME(0 * 100));
+IF TON_6_R00616.Q THEN
+	R00619 := WORD_TO_INT(R00616[0]);
+END_IF;
+
+(* Rung 7: Rung 7 *)
+IF #ALW_ON AND FQCBPLS THEN
+	R00620 := 18000 / R00619;
+	R00620 := R00620 * 20;
+	R09006[2] := INT_TO_WORD(R00620);
+END_IF;
+
+(* Rung 8: Rung 8 *)
+IF #ALW_ON AND NOT P4065 THEN
+	R09006[2] := 0;
+END_IF;
+
+(* Rung 9: CIP C in alarm state. *)
+TON_9_LST_TMR(IN := (P4M66 AND #ALW_OFF AND (FQC1007[0] < 1000)), PT := INT_TO_TIME(PMPAPRD * 100));
+T00003 := TON_9_LST_TMR.Q;
+IF T00003 THEN
+	C_ALARM := TRUE;
+END_IF;
+
+(* Rung 10: Valve 1-80 alarm,+ 16 status *)
+(*
+    Original Mnemonic: ARRAY_MOVE_BOOL 96 T00001 1 72 3 ALRM_96;
+    ---------------------------------------------------------------------
+    >> Instruction Analysis:
+    >> The instruction copies 3 bits (N=3), starting from the 1st bit 
+    >> (SNX=1) of the source block beginning at T00001. It writes them 
+    >> to the destination block, starting at the 72nd bit (DNX=72) 
+    >> within the block that begins at ALRM_96 (%R09040).
+
+    >> Destination Address Calculation:
+    >> Start Address: %R09040
+    >> Offset: 72 - 1 = 71 bits
+    >> Final Address: %R09040 + 71 bits = %R9044.7
+    ---------------------------------------------------------------------
+*)
+ALARM_WORD_4.7 := T00001; (* Copy the first bit to the calculated destination address *)
+ALARM_WORD_4.8 := T00002; (* Copy the second bit to the next location *)
+ALARM_WORD_4.9 := T00003; (* Copy the third bit to the next location *)

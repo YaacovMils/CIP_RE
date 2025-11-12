@@ -1,0 +1,242 @@
+(*!
+@purpose
+This program (`E_OPER.txt`) serves as the final command arbitration logic for all operable devices (valves and pumps) on the "CIP E" line. It is a direct parallel to `D_OPER.txt`. Its primary responsibility is to decide whether a device should be controlled by the automatic sequence or by a manual command from an operator.
+
+For each device, it implements a standard "Auto/Manual Station" logic pattern:
+- If the device is in **Auto mode** (`*_Man_Auto` is FALSE), the final command (`*_Oper`) is driven by the automatic logic (`*_Cmd`), but only if there are no overriding interlocks or system faults.
+- If the device is in **Manual mode** (`*_Man_Auto` is TRUE), the automatic logic is ignored, and the final command is driven directly by the operator's manual pushbuttons (`*_ManOn`).
+
+This ensures a clear and safe distinction between automatic and manual control. The program also manages the speed setpoint for the variable-speed CIP pump.
+
+@inputs
+- `*_Cmd` (BOOL): A set of boolean flags from `E_GNACT.txt` representing the desired state of each device in automatic mode.
+- `*_Man_Auto` (BOOL): Flags from the HMI that switch a device between Manual (TRUE) and Auto (FALSE) mode.
+- `*_ManOn` (BOOL): Flags from HMI pushbuttons for manually commanding a device on when it is in Manual mode.
+- `E_Farm_FLT`, `Rreactor_GEN_FLT` (BOOL): High-level fault flags that serve as safety interlocks for automatic operation.
+- `*_Intrlk` (BOOL): Individual interlock flags for specific devices.
+- `SP_Pump_Speed_R30` (REAL): The desired speed setpoint for the main pump when it is running.
+
+@outputs
+- `*_Oper` (BOOL): The final, arbitrated "operate" command for each device. This signal is mapped to the physical outputs in `E_DQ.txt`.
+- `P4269_SC` (REAL): The speed control setpoint for the main CIP E pump. It is set to the configured speed when the pump is running and to 0.0 when it is stopped.
+
+@notes
+- This code is for a GE/Emerson RX3i PLC and is written in Structured Text (ST).
+- This program is a critical layer for operator interaction, providing the necessary logic to allow manual intervention while maintaining safety interlocks for automatic operation.
+- The consistent `(Auto AND NOT Manual) OR (Manual_Cmd AND Manual)` pattern is a fundamental and robust design for any system requiring both automatic and manual control.
+*)
+VAR_GLOBAL
+	E_Farm_FLT AT %M01640 : BOOL; (* General Fault CIP E *)
+	P4269_Cmd AT %M01712 : BOOL;
+	P4269_Intrlk AT %M01632 : BOOL;
+	P4269_Man_Auto AT %M01532 : BOOL;
+	P4269_ManOn AT %M01512 : BOOL;
+	P4269_Oper AT %M01692 : BOOL;
+	P4269_SC AT %R09160 : REAL; (* CIP_D Pump  Speed Control  0-100% *)
+	Rreactor_GEN_FLT AT %M03003 : BOOL; (* Rreactors General Fault *)
+	Rx_Cooker_Fault_R30 AT %M01805 : BOOL; (* Signal From Cooker *)
+	Rx_Hold_CIP_Pump_R30 AT %M01802 : BOOL;
+	Rx_R40_Fault AT %M01904 : BOOL; (* Signal From R40 *)
+	SP_Pump_Speed_R30 AT %R09162 : REAL; (* 0-100% *)
+	XV4202_Cmd AT %M01703 : BOOL;
+	XV4202_Intrlk AT %M01623 : BOOL;
+	XV4202_Man_Auto AT %M01523 : BOOL;
+	XV4202_ManOn AT %M01503 : BOOL;
+	XV4202_Oper AT %M01683 : BOOL;
+	XV4204_Cmd AT %M01704 : BOOL;
+	XV4204_Intrlk AT %M01624 : BOOL;
+	XV4204_Man_Auto AT %M01524 : BOOL;
+	XV4204_ManOn AT %M01504 : BOOL;
+	XV4204_Oper AT %M01684 : BOOL;
+	XV4206_Cmd AT %M01702 : BOOL;
+	XV4206_Intrlk AT %M01622 : BOOL;
+	XV4206_Man_Auto AT %M01522 : BOOL;
+	XV4206_ManOn AT %M01502 : BOOL;
+	XV4206_Oper AT %M01682 : BOOL;
+	XV4208_Cmd AT %M01701 : BOOL;
+	XV4208_Intrlk AT %M01621 : BOOL;
+	XV4208_Man_Auto AT %M01521 : BOOL;
+	XV4208_ManOn AT %M01501 : BOOL;
+	XV4208_Oper AT %M01681 : BOOL;
+	XV4211_Cmd AT %M01705 : BOOL;
+	XV4211_Intrlk AT %M01625 : BOOL;
+	XV4211_Man_Auto AT %M01525 : BOOL;
+	XV4211_ManOn AT %M01505 : BOOL;
+	XV4211_Oper AT %M01685 : BOOL;
+	XV4225_Cmd AT %M01706 : BOOL;
+	XV4225_Intrlk AT %M01626 : BOOL;
+	XV4225_Man_Auto AT %M01526 : BOOL;
+	XV4225_ManOn AT %M01506 : BOOL;
+	XV4225_Oper AT %M01686 : BOOL;
+	XV4228_Cmd AT %M01709 : BOOL;
+	XV4228_Intrlk AT %M01629 : BOOL;
+	XV4228_Man_Auto AT %M01529 : BOOL;
+	XV4228_ManOn AT %M01509 : BOOL;
+	XV4228_Oper AT %M01689 : BOOL;
+	XV4231_Cmd AT %M01710 : BOOL;
+	XV4231_Intrlk AT %M01630 : BOOL;
+	XV4231_Man_Auto AT %M01530 : BOOL;
+	XV4231_ManOn AT %M01510 : BOOL;
+	XV4231_Oper AT %M01690 : BOOL;
+	XV4234_Cmd AT %M01708 : BOOL;
+	XV4234_Intrlk AT %M01628 : BOOL;
+	XV4234_Man_Auto AT %M01528 : BOOL;
+	XV4234_ManOn AT %M01508 : BOOL;
+	XV4234_Oper AT %M01688 : BOOL;
+	XV4236_Cmd AT %M01707 : BOOL;
+	XV4236_Intrlk AT %M01627 : BOOL;
+	XV4236_Man_Auto AT %M01527 : BOOL;
+	XV4236_ManOn AT %M01507 : BOOL;
+	XV4236_Oper AT %M01687 : BOOL;
+	XV4281_Cmd AT %M01711 : BOOL;
+	XV4281_Intrlk AT %M01631 : BOOL;
+	XV4281_Man_Auto AT %M01531 : BOOL;
+	XV4281_ManOn AT %M01511 : BOOL;
+	XV4281_Oper AT %M01691 : BOOL;
+END_VAR
+
+(* Rung 1: Rreactors General Fault *)
+Rreactor_GEN_FLT := Rx_Cooker_Fault_R30 OR Rx_R40_Fault;
+
+(* Rung 2: XV4208_Cmd    CIP_E Return To Water Recovery Tank *)
+
+(* Rung 3: XV4208_Cmd    CIP_E Return To Water Recovery Tank *)
+XV4208_Oper := (XV4208_Cmd AND NOT XV4208_Man_Auto AND NOT E_Farm_FLT AND NOT Rreactor_GEN_FLT)
+				OR (XV4208_ManOn AND XV4208_Man_Auto)AND NOT XV4208_Intrlk;
+
+(* Rung 4: XV4208_ManOn *)
+IF NOT XV4208_Man_Auto THEN
+	XV4208_ManOn := FALSE;
+END_IF;
+
+(* Rung 5: XV4206_Cmd CIP_E Return To Acid Tank *)
+
+(* Rung 6 *)
+XV4206_Oper := (XV4206_Cmd AND NOT XV4206_Man_Auto AND NOT E_Farm_FLT AND NOT Rreactor_GEN_FLT)
+				OR (XV4206_ManOn AND XV4206_Man_Auto)
+				AND NOT XV4206_Intrlk;
+
+(* Rung 7: XV4206_ManOn *)
+IF NOT XV4206_Man_Auto THEN
+	XV4206_ManOn := FALSE;
+END_IF;
+
+(* Rung 8: XV4202_Cmd *)
+
+(* Rung 9: XV4202_Cmd *)
+XV4202_Oper := (XV4202_Cmd AND NOT XV4202_Man_Auto AND NOT E_Farm_FLT AND NOT Rreactor_GEN_FLT )
+				OR (XV4202_ManOn AND XV4202_Man_Auto) AND NOT XV4202_Intrlk;
+
+(* Rung 10: XV4202_ManOn *)
+IF NOT XV4202_Man_Auto THEN
+	XV4202_ManOn := FALSE;
+END_IF;
+
+(* Rung 11: XV4204_Cmd  CIP_E Return To Soda2 Tank *)
+
+(* Rung 12: XV4204_Cmd  CIP_E Return To Soda2 Tank *)
+XV4204_Oper := (XV4204_Cmd AND NOT XV4204_Man_Auto AND NOT E_Farm_FLT AND NOT Rreactor_GEN_FLT)
+				OR (XV4204_ManOn AND XV4204_Man_Auto)AND NOT XV4204_Intrlk;
+
+(* Rung 13: XV4204_ManOn *)
+IF NOT XV4204_Man_Auto THEN
+	XV4204_ManOn := FALSE;
+END_IF;
+
+(* Rung 14: XV4211_Cmd  CIP_D Return To Drain *)
+
+(* Rung 15: XV4211_Cmd  CIP_D Return To Drain *)
+XV4211_Oper := (XV4211_Cmd AND NOT XV4211_Man_Auto AND NOT E_Farm_FLT AND NOT Rreactor_GEN_FLT )
+				OR (XV4211_ManOn AND XV4211_Man_Auto)AND NOT XV4211_Intrlk;
+
+(* Rung 16: XV4211_ManOn *)
+IF NOT XV4211_Man_Auto THEN
+	XV4211_ManOn := FALSE;
+END_IF;
+
+(* Rung 17: XV4225_Cmd  CIP_D From Water Recovery Tank *)
+
+(* Rung 18: XV4225_Cmd  CIP_D From Water Recovery Tank *)
+XV4225_Oper := (XV4225_Cmd AND NOT XV4225_Man_Auto AND NOT Rreactor_GEN_FLT )
+				OR (XV4225_ManOn AND XV4225_Man_Auto)AND NOT XV4225_Intrlk;
+
+(* Rung 19: XV4225_ManOn *)
+IF NOT XV4225_Man_Auto THEN
+	XV4225_ManOn := FALSE;
+END_IF;
+
+(* Rung 20: XV4236_Cmd  CIP_D From Acid Tank *)
+
+(* Rung 21: XV4236_Cmd  CIP_D From Acid Tank *)
+XV4236_Oper := (XV4236_Cmd AND NOT XV4236_Man_Auto AND NOT Rreactor_GEN_FLT )
+				OR (XV4236_ManOn AND XV4236_Man_Auto)AND NOT XV4236_Intrlk;
+
+(* Rung 22: XV4236_ManOn *)
+IF NOT XV4236_Man_Auto THEN
+	XV4236_ManOn := FALSE;
+END_IF;
+
+(* Rung 23: XV4234_Cmd  CIP_D From Soda1 Tank *)
+
+(* Rung 24: XV4234_Cmd  CIP_D From Soda1 Tank *)
+XV4234_Oper := (XV4234_Cmd AND NOT XV4234_Man_Auto AND NOT Rreactor_GEN_FLT )
+				OR (XV4234_ManOn AND XV4234_Man_Auto)AND NOT XV4234_Intrlk;
+
+(* Rung 25: XV4234_ManOn *)
+IF NOT XV4234_Man_Auto THEN
+	XV4234_ManOn := FALSE;
+END_IF;
+
+(* Rung 26: XV4228_Cmd  CIP_D From Soda2 Tank *)
+
+(* Rung 27: XV4228_Cmd  CIP_D From Soda2 Tank *)
+XV4228_Oper := (XV4228_Cmd AND NOT XV4228_Man_Auto AND NOT E_Farm_FLT AND NOT Rreactor_GEN_FLT )
+				OR (XV4228_ManOn AND XV4228_Man_Auto)AND NOT XV4228_Intrlk;
+
+(* Rung 28: XV4228_ManOn *)
+IF NOT XV4228_Man_Auto THEN
+	XV4228_ManOn := FALSE;
+END_IF;
+
+(* Rung 29: XV4231_Cmd  CIP_D Fresh Water *)
+
+(* Rung 30: XV4231_Cmd  CIP_D Fresh Water *)
+XV4231_Oper := (XV4231_Cmd AND NOT XV4231_Man_Auto AND NOT Rreactor_GEN_FLT )
+				OR (XV4231_ManOn AND XV4231_Man_Auto)AND NOT XV4231_Intrlk;
+
+(* Rung 31: XV4231_ManOn *)
+IF NOT XV4231_Man_Auto THEN
+	XV4231_ManOn := FALSE;
+END_IF;
+
+(* Rung 32: XV4281_Cmd  CIP_D  To Drain *)
+
+(* Rung 33: XV4281_Cmd  CIP_D  To Drain *)
+XV4281_Oper := (XV4281_Cmd AND NOT XV4281_Man_Auto )
+				OR (XV4281_ManOn AND XV4281_Man_Auto)AND NOT XV4281_Intrlk;
+
+(* Rung 34: XV4281_ManOn *)
+IF NOT XV4281_Man_Auto AND NOT XV4281_Cmd THEN
+	XV4281_ManOn := FALSE;
+END_IF;
+
+(* Rung 35: P4269_Start_Cmd *)
+
+(* Rung 36: P4269_Start_Cmd *)
+P4269_Oper := (P4269_Cmd AND NOT P4269_Man_Auto AND NOT Rx_Hold_CIP_Pump_R30 AND NOT E_Farm_FLT AND NOT Rreactor_GEN_FLT)
+				OR (P4269_ManOn AND P4269_Man_Auto)AND NOT P4269_Intrlk;
+
+(* Rung 37: P4269_ManOn *)
+IF NOT P4269_Man_Auto THEN
+	P4269_ManOn := FALSE;
+END_IF;
+
+(* Rung 38:  CIP_D Pump  Speed Control  0-100% *)
+IF P4269_Oper THEN
+	P4269_SC := SP_Pump_Speed_R30;
+END_IF;
+
+(* Rung 39:  CIP_D Pump  Speed Control  0-100% *)
+IF NOT P4269_Oper THEN
+	P4269_SC := 0.0;
+END_IF;

@@ -1,0 +1,32 @@
+(*!
+@purpose
+This program (`CIP_B.txt`) serves as a master organizational routine for the entire Cleaning-In-Place (CIP) B-line process. It is a direct parallel to `CIP_A.txt` and contains no direct process logic itself. Its sole function is to call the main sub-programs for Line B in the correct and deterministic sequence.
+
+The execution order is critical for stable operation:
+1.  `B_CMD()`: The command handler is called first to interpret any new commands for Line B.
+2.  `B_CIP()`: Next, the main process logic is executed, acting upon the flags set by `B_CMD`.
+3.  `B_U_ST()`: Finally, the status update routine is called to compile the final status word for HMI/SCADA communication.
+
+@inputs
+- This program has no direct inputs; it calls subroutines that interact with global variables.
+
+@outputs
+- This program has no direct outputs; it calls subroutines that interact with global variables.
+
+@notes
+- This code is for a GE/Emerson RX3i PLC and is written in Structured Text (ST).
+- This file demonstrates the templated, copy-paste design pattern used in this project, as it is functionally identical to `CIP_A.txt` but scoped to the "B" set of variables and programs.
+- Using this type of organizational block is excellent programming practice for complex PLC applications as it guarantees a predictable scan cycle.
+*)
+VAR_GLOBAL
+    (* No global variables were defined in the provided interface block. *)
+END_VAR
+
+(* Rung 1 *)
+B_CMD();
+
+(* Rung 2 *)
+B_CIP();
+
+(* Rung 3 *)
+B_U_ST();

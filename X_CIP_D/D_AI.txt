@@ -1,0 +1,57 @@
+(*!
+@purpose
+This program (`D_AI.txt`) is responsible for scaling raw analog input values for the "CIP D" process area. It is functionally similar to `ANG2ENG.txt` but handles a different set of physical instruments. Its purpose is to convert the raw integer values (typically 0-32000) from the PLC's analog input modules into meaningful, floating-point engineering units that can be used for control logic and display on an HMI.
+
+It performs a simple linear scaling calculation for each of the three monitored analog signals: flow, conductivity, and temperature.
+
+@inputs
+- `AI0020` (%AI0020): The raw integer value from the flow transmitter FIT_107.
+- `AI0021` (%AI0021): The raw integer value from the conductivity transmitter CIT_1110.
+- `AI0023` (%AI0023): The raw integer value from the temperature transmitter TIT_107.
+
+@outputs
+- `FIT107_Eu` (%R09211): The calculated flow rate in engineering units (e.g., m³/h).
+- `CIT1110_Eu` (%R09213): The calculated conductivity in engineering units (e.g., mS).
+- `TIT107_Eu` (%R09215): The calculated temperature in engineering units (e.g., °C).
+
+@notes
+- This code is for a GE/Emerson RX3i PLC and is written in Structured Text (ST).
+- The program uses a single temporary REAL variable (`AI_General_1`) for all intermediate calculations, which is efficient but can make debugging slightly less intuitive.
+- The scaling factor (e.g., `35.0`, `100.0`, `150.0`) represents the maximum engineering unit range of the corresponding transmitter. The divisor `32000.0` represents the maximum raw value from the analog input card.
+*)
+VAR_GLOBAL
+	AI0020 AT %AI0020 : INT; (* FIT_107 *)
+	AI0021 AT %AI0021 : INT; (** V1.0.0.0, 11/12/2021, Author *)
+	AI0023 AT %AI0023 : INT; (** V1.0.0.0, 11/12/2021, Author *)
+	AI_General_1 AT %R09200 : REAL; (* WORD1/2 *)
+	CIT1110_Eu AT %R09213 : REAL; (* CIP_D Conductivty   0-100 mS *)
+	FIT107_Eu AT %R09211 : REAL; (* CIP D Flow   0-100.0m3/h *)
+	TIT107_Eu AT %R09215 : REAL; (** V1.0.0.0, 11/12/2021, Author *)
+END_VAR
+
+(* Rung 1: COMMENT0 *)
+
+(* Rung 2: WORD1/2 *)
+AI_General_1 := INT_TO_REAL(AI0020);
+
+(* Rung 3: CIP D Flow   0-100.0m3/h *)
+AI_General_1 := AI_General_1 * 35.0;
+FIT107_Eu := AI_General_1 / 32000.0;
+
+(* Rung 4: COMMENT1 *)
+
+(* Rung 5: WORD1/2 *)
+AI_General_1 := INT_TO_REAL(AI0021);
+
+(* Rung 6: CIP_D Conductivty   0-100 mS *)
+AI_General_1 := AI_General_1 * 100.0;
+CIT1110_Eu := AI_General_1 / 32000.0;
+
+(* Rung 7: COMMENT2 *)
+
+(* Rung 8: WORD1/2 *)
+AI_General_1 := INT_TO_REAL(AI0023);
+AI_General_1 := AI_General_1 * 150.0;
+
+(* Rung 9 *)
+TIT107_Eu := AI_General_1 / 32000.0;

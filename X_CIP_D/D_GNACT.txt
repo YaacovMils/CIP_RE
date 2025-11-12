@@ -1,0 +1,239 @@
+(*!
+@purpose
+This program (`D_GNACT`) is responsible for activating the physical outputs (valves and pumps) for the Line D CIP sequence.
+It reads the boolean step flags (e.g., `D_Step1`, `D_Step2`) that are unpacked from the `D_Steper` variable by the `D_BITAL` function block.
+Based on the active step and the selected CIP cycle type (`CIP_Rinsing`, `CIP_Soda`, etc.), this program generates the command signals (`_Cmd`)
+that control the process equipment.
+
+The logic is organized by output device, where each rung or section determines the conditions under which a specific valve or pump should be active.
+
+@inputs
+- `D_Step1` to `D_Step100` (BOOL): A series of boolean flags indicating the currently active step.
+- `CIP_Rinsing`, `CIP_Soda`, `CIP_Acid`, `CIP_All` (BOOL): Boolean flags indicating the selected CIP cycle type.
+- `Rx_Hold_D_SEQ` (%M00803) (BOOL): EGD signal from the Cooker PLC to hold the sequence.
+- `LSH3074` (%I00074) (BOOL): High-level switch for the water recovery tank (T2).
+- `T1_BUSY` (BOOL), `T2_BUSY` (BOOL): Flags indicating if the water tanks are currently in use.
+- `STOPALL` (%M00104) (BOOL): A global command to stop all processes.
+
+@outputs
+- `XV4108_Cmd` (%M00701) (BOOL): Command to open the valve for returning water to the Recovery Tank (T2).
+- `XV4106_Cmd` (%M00702) (BOOL): Command to open the valve for returning solution to the Acid Tank.
+- `XV4102_Cmd` (%M00703) (BOOL): Command to open the valve for returning solution to the Soda 1 Tank.
+- `XV4104_Cmd` (%M00704) (BOOL): Command to open the valve for returning solution to the Soda 2 Tank.
+- `XV4111_Cmd` (%M00705) (BOOL): Command to open the valve for returning liquids to the drain.
+- `XV4125_Cmd` (%M00706) (BOOL): Command to open the valve to supply CIP from the Water Recovery Tank.
+- `XV4136_Cmd` (%M00707) (BOOL): Command to open the valve to supply CIP from the Acid Tank.
+- `XV4134_Cmd` (%M00708) (BOOL): Command to open the valve to supply CIP from the Soda 1 Tank.
+- `XV4128_Cmd` (%M00709) (BOOL): Command to open the valve to supply CIP from the Soda 2 Tank.
+- `XV4131_Cmd` (%M00710) (BOOL): Command to open the valve to supply Fresh Water.
+- `XV4181_Cmd` (%M00711) (BOOL): Command to open the main valve from the CIP line to the drain.
+- `P4169_Start_Cmd` (%M00712) (BOOL): Command to start the main CIP D pump.
+
+@notes
+- This code is for a GE/Emerson RX3i PLC and is written in Structured Text (ST).
+- This program's logic is purely combinational, translating the current state from `D_STRCT` into physical actions. It does not contain its own states or timers.
+- The logic for handling the high level of the recovery tank (`LSH3074`) includes a 5-second debounce timer to prevent rapid cycling of the return valves.
+*)
+VAR_GLOBAL
+	CIP_Acid AT %M00353 : BOOL; (* Line D *)
+	CIP_All AT %M00354 : BOOL; (* Line D *)
+	CIP_Rinsing AT %M00351 : BOOL; (* Line D *)
+	CIP_Soda AT %M00352 : BOOL; (* Line D *)
+	D_Step1 AT %M00401 : BOOL; (* Line D *)
+	D_Step100 AT %M00489 : BOOL; (* סיום תהליך שטיפה *)
+	D_Step2 AT %M00402 : BOOL; (* Line D *)
+	D_Step21 AT %M00421 : BOOL; (* Line D *)
+	D_Step22 AT %M00422 : BOOL; (* סודה ריקון *)
+	D_Step23 AT %M00423 : BOOL; (* Line D *)
+	D_Step24 AT %M00424 : BOOL; (* Line D *)
+	D_Step28 AT %M00428 : BOOL; (* Line D *)
+	D_Step29 AT %M00429 : BOOL; (* Line D *)
+	D_Step3 AT %M00403 : BOOL; (* Line D *)
+	D_Step30 AT %M00430 : BOOL; (* Line D *)
+	D_Step4 AT %M00404 : BOOL; (* שטיפה ראשונה  המתנה למוליכות *)
+	D_Step41 AT %M00441 : BOOL; (* Line D *)
+	D_Step42 AT %M00442 : BOOL; (* Line D *)
+	D_Step43 AT %M00443 : BOOL; (* Line D *)
+	D_Step44 AT %M00444 : BOOL; (* Line D *)
+	D_Step48 AT %M00448 : BOOL; (* Line D *)
+	D_Step49 AT %M00449 : BOOL; (* שטיפת ביניים פליטים *)
+	D_Step61 AT %M00461 : BOOL; (* Line D *)
+	D_Step62 AT %M00462 : BOOL; (* Line D *)
+	D_Step63 AT %M00463 : BOOL; (* Line D *)
+	D_Step64 AT %M00464 : BOOL; (* Line D *)
+	D_Step68 AT %M00468 : BOOL; (* Line D *)
+	D_Step69 AT %M00469 : BOOL; (* Line D *)
+	D_Step8 AT %M00408 : BOOL; (* Line D *)
+	D_Step81 AT %M00481 : BOOL; (* Line D *)
+	D_Step82 AT %M00482 : BOOL; (* Line D *)
+	D_Step83 AT %M00483 : BOOL; (* Line D *)
+	D_Step84 AT %M00484 : BOOL; (* Line D *)
+	D_Step88 AT %M00488 : BOOL; (* Line D *)
+	D_Step9 AT %M00409 : BOOL; (* Line D *)
+	D_Step90 AT %M00490 : BOOL; (* Line D *)
+	LSH3074 AT %I00074 : BOOL; (* WATER RECOVERY TANK HIGH LEVEL *)
+	LSH3074_OFF AT %M00363 : BOOL; (* T2 High Level *)
+	LSH3074_ON AT %M00362 : BOOL; (* T2 High Level *)
+	P4169_Start_Cmd AT %M00712 : BOOL; (* CIP_D Pump *)
+	Rx_Hold_D_SEQ AT %M00803 : BOOL; (* Signal From Cooker *)
+	Rx_R20_Steper AT %R09601 : INT; (* Signals R20 *)
+	STOPALL AT %M00104 : BOOL; (* Stop all processes *)
+	T1_BUSY AT %M00122 : BOOL; (* Water tank busy *)
+	T2_BUSY AT %M00123 : BOOL; (* Recovery water tank busy *)
+	XV4102_Cmd AT %M00703 : BOOL; (* CIP_D Return To Soda1 Tank *)
+	XV4104_Cmd AT %M00704 : BOOL; (* CIP_D Return To Soda2 Tank *)
+	XV4106_Cmd AT %M00702 : BOOL; (* CIP_D Return To Acid Tank *)
+	XV4108_Cmd AT %M00701 : BOOL; (* CIP_D Return To Water Recovery Tank *)
+	XV4111_Cmd AT %M00705 : BOOL; (* CIP_D Return To Drain *)
+	XV4125_Cmd AT %M00706 : BOOL; (* CIP_D From Water Recovery Tank *)
+	XV4128_Cmd AT %M00709 : BOOL; (* CIP_D From Soda2 Tank *)
+	XV4131_Cmd AT %M00710 : BOOL; (* CIP_D Fresh Water *)
+	XV4134_Cmd AT %M00708 : BOOL; (* CIP_D From Soda1 Tank *)
+	XV4136_Cmd AT %M00707 : BOOL; (* CIP_D From Acid Tank *)
+	XV4181_Cmd AT %M00711 : BOOL; (* CIP_D  To Drain *)
+END_VAR
+VAR
+	R09352 : TON;
+	R09355 : TON;
+END_VAR
+
+(* Rung 1 *)
+(* COMMENT0 *)
+
+(* Rung 2 *)
+(* CIP_D Return To Water Recovery Tank *)
+XV4108_Cmd := ((D_Step61 OR D_Step62 OR D_Step88 OR D_Step100 OR D_Step90
+				OR(D_Step82 OR D_Step83 OR D_Step84 AND CIP_Rinsing)))AND NOT LSH3074_ON) 
+
+
+(* Rung 3 *)
+(* T2 High Level *)
+R09352(EN := LSH3074, PV := T#5S);
+
+(* Rung 4 *)
+(* T2 High Level *)
+LSH3074_ON := R09352.Q OR (LSH3074_ON AND NOT LSH3074_OFF);
+
+(* Rung 5 *)
+(* T2 High Level *)
+R09355(EN := NOT LSH3074, PV := T#5S);
+LSH3074_OFF := R09355.Q
+
+(* Rung 6 *)
+(* COMMENT1 *)
+
+(* Rung 7 *)
+(* CIP_D Return To Acid Tank *)
+XV4106_Cmd := D_Step68 OR D_Step69 OR D_Step63 OR D_Step64 
+			  OR((D_Step81 OR D_Step82 OR D_Step83 OR D_Step84)AND(CIP_Acid OR CIP_All);
+
+(* Rung 8 *)
+(* COMMENT2 *)
+
+(* Rung 9 *)
+(* CIP_D Return To Soda1 Tank *)
+_Bit := D_Step30 AND (Rx_R20_Steper = 7);
+
+(* Rung 10 *)
+(* CIP_D Return To Soda1 Tank *)
+XV4102_Cmd := ((_Bit OR D_Step28 OR D_Step29 OR D_Step42 OR D_Step43 OR D_Step44)
+			  OR (D_Step81 OR D_Step82 OR D_Step83 OR D_Step84)AND CIP_Soda);
+
+(* Rung 11 *)
+(* COMMENT3 *)
+
+(* Rung 12 *)
+(* CIP_D Return To Soda2 Tank *)
+_Bit := D_Step30 AND (Rx_R20_Steper = 7);
+IF D_Step30 THEN
+
+
+(* Rung 13 *)
+(* CIP_D Return To Soda2 Tank *)
+XV4104_Cmd := ((_Bit OR D_Step28 OR D_Step29 OR D_Step42 OR D_Step43 OR D_Step44)
+			  OR (D_Step81 OR D_Step82 OR D_Step83 OR D_Step84)AND CIP_Soda);
+
+(* Rung 14 *)
+(* COMMENT4 *)
+
+(* Rung 15 *)
+(* CIP_D Return To Drain *)
+XV4111_Cmd := (D_Step1 OR D_Step2 OR D_Step3 OR D_Step4 OR D_Step8 OR D_Step9 OR D_Step21
+				OR D_Step22 OR D_Step23 OR D_Step24 OR D_Step48 OR D_Step49 OR D_Step88 OR D_Step100 OR D_Step90)
+				OR ((D_Step61 OR D_Step62 OR D_Step63 OR D_Step64 AND LSH3074_ON))
+				OR ((D_Step82 OR D_Step83 OR D_Step84)AND CIP_Rinsing );
+
+
+(* Rung 16 *)
+(* COMMENT5 *)
+
+(* Rung 17 *)
+(* CIP_D From Water Recovery Tank *)
+XV4125_Cmd := (D_Step1 OR D_Step3 OR D_Step4 OR D_Step8 OR D_Step9 OR D_Step41
+			   OR D_Step44 OR D_Step43 OR D_Step48 OR D_Step49) AND NOT T2_BUSY;
+
+(* Rung 18 *)
+(* COMMENT6 *)
+
+(* Rung 19 *)
+(* CIP_D From Acid Tank *)
+XV4136_Cmd := D_Step61 OR D_Step63 OR D_Step64 OR D_Step68 OR D_Step69;
+
+(* Rung 20 *)
+(* COMMENT7 *)
+
+(* Rung 21 *)
+(* CIP_D From Soda1 Tank *)
+_Bit := D_Step30 AND (Rx_R20_Steper = 4);
+
+(* Rung 22 *)
+(* CIP_D From Soda1 Tank *)
+XV4134_Cmd := _Bit OR D_Step21 OR D_Step23 OR D_Step24 OR D_Step28 OR D_Step29;
+
+(* Rung 23 *)
+(* COMMENT8 *)
+
+(* Rung 24 *)
+(* CIP_D From Soda2 Tank *)
+_Bit := D_Step30 AND (Rx_R20_Steper = 4);
+
+(* Rung 25 *)
+(* CIP_D From Soda2 Tank *)
+XV4128_Cmd := _Bit OR D_Step23 OR D_Step24 OR D_Step28 OR D_Step29;
+
+(* Rung 26 *)
+(* COMMENT9 *)
+
+(* Rung 27 *)
+(* CIP_D Fresh Water *)
+XV4131_Cmd := NOT T1_BUSY AND((D_Step81 OR D_Step83 OR D_Step84 OR D_Step88 OR D_Step100) 
+			   OR ((D_Step1 OR D_Step3 OR D_Step4 OR D_Step8 OR D_Step9
+				   OR D_Step41 OR D_Step44 OR D_Step43 OR D_Step48 OR D_Step49)AND T2_BUSY);
+
+(* Rung 28 *)
+(* COMMENT10 *)
+
+(* Rung 29 *)
+(* CIP_D  To Drain *)
+XV4181_Cmd := D_Step1 OR D_Step3 OR D_Step4 OR D_Step8 OR D_Step9
+			  OR D_Step21 OR D_Step23 OR D_Step24 OR D_Step28 OR D_Step29
+			  OR D_Step30 OR D_Step41 OR D_Step43 OR D_Step44 OR D_Step48 OR D_Step49
+			  OR D_Step61 OR D_Step63 OR D_Step64 OR D_Step68 OR D_Step69 OR D_Step81
+			  OR D_Step83 OR D_Step84 OR D_Step88 OR D_Step100;
+
+(* Rung 30 *)
+(* COMMENT11 *)
+
+(* Rung 31 *)
+(* CIP_D Pump *)
+_Bit := D_Step30 AND (Rx_R20_Steper = 4);
+
+(* Rung 32 *)
+(* CIP_D Pump *)
+P4169_Start_Cmd := (_Bit OR D_Step1 OR D_Step3 OR D_Step4 OR D_Step8
+				   OR D_Step9 OR D_Step21 OR D_Step23 OR D_Step24
+				   OR D_Step28 OR D_Step29 OR D_Step41 OR D_Step43
+				   OR D_Step44 OR D_Step48 OR D_Step49 OR D_Step61
+				   OR D_Step63 OR D_Step64 OR D_Step68 OR D_Step69
+				   OR D_Step81 OR D_Step83 OR D_Step84 OR D_Step88 OR D_Step100)
+				   AND NOT Rx_Hold_D_SEQ AND NOT STOPALL;

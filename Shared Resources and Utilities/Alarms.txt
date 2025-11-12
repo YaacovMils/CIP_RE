@@ -1,0 +1,191 @@
+(*!
+@purpose
+This program (`Alarms.txt`) acts as the central alarm handler and latching mechanism for the entire CIP system. It orchestrates the execution of other alarm-generating subroutines and manages the persistence of alarm states.
+
+Its core responsibilities are:
+1.  **Execution Control:** It calls the primary alarm monitoring programs (`A_VALV`, `A_PUMP`, `A_FQC`) to ensure they are scanned and evaluated.
+2.  **Alarm State Change Detection:** It continuously compares the current state of the main system alarms (`A_ALARM`, `B_ALARM`, etc.) with their state from the previous scan. When a new alarm is detected, it sets a flag.
+3.  **Fault Latching (Snapshot):** Upon detecting a new alarm, it immediately takes a "snapshot" of the detailed, bit-level fault registers (`ALRM_96`, etc.) and copies them to a temporary holding area (`TMP6ALM`, etc.). This captures the specific root cause of the system alarm (e.g., which valve failed).
+4.  **Alarm Persistence:** As long as a system is stopped in an alarm state, this program continuously ORs the live fault registers with the latched snapshot. This ensures that the original fault bit remains active for HMI/SCADA display even if the physical fault condition clears, until a proper reset is performed.
+
+@inputs
+- `A_ALARM`, `B_ALARM`, `C_ALARM`, `T1_ALRM`, `T3_ALR`, `T45_ALR`, `BRL_ALR`: The primary, high-level alarm flags from various subsystems.
+- `A_STOP`, `B_STOP`, `C_STOP`, etc.: Flags indicating that the corresponding subsystems are stopped.
+- `ALRM_96` (%R09040 - %R09044): A block of words containing detailed, bit-mapped alarm statuses from other monitoring programs like `A_Valve.txt` and `A_Pump.txt`.
+
+@outputs
+- `ALRM_96` (%R09040 - %R09044): This program modifies this block of registers by ORing them with the latched alarm data, making the alarms persistent.
+- `ALM_USR`, `ALM_CMP`: Internal flags used for change detection logic.
+- `TMP6ALM` (%R00150 - %R00154): The temporary storage area for the alarm snapshot.
+
+@notes
+- This code is for a GE/Emerson RX3i PLC and is written in Structured Text (ST).
+- This program is the core of the plant's fault diagnostics system, providing a "first-out" style of alarm capture.
+- The separation of `ALM_STB` (status before) and `ALM_STA` (status after) is a classic PLC technique for one-shot edge detection on a change of state.
+*)
+VAR_GLOBAL
+    ALW_ON AT %S00007 : BOOL; (* Always ON *)
+    A_ALARM AT %M00170 : BOOL; (* CIP A in alarm state. *)
+    A_STOP AT %M00130 : BOOL; (* CIP A stopped *)
+    ALM_CMP AT %M00129 : BOOL; (* Alarms state changed (process) *)
+    ALM_STA AT %R00161 : INT; (* Alarm status after alarm update *)
+    ALM_STB AT %R00160 : INT; (* Alarm status before alarm update *)
+    ALM_USR AT %M00128 : BOOL; (* Alarms state changed (user:Cont) *)
+    ALRM_96 AT %R09040 : WORD; (* Valve 1-80 alarm,+ 16 status *)
+    B_ALARM AT %M00171 : BOOL; (* CIP B in alarm state. *)
+    B_STOP AT %M00144 : BOOL; (* CIP B stopped *)
+    BRL_ALR AT %M00176 : BOOL; (* Barrel in alarm state. *)
+    C_ALARM AT %M00172 : BOOL; (* CIP C in alarm state. *)
+    C_STOP AT %M00155 : BOOL; (* CIP C stopped *)
+    R09041 AT %R09041 : WORD; (* *)
+    R09042 AT %R09042 : WORD; (* *)
+    R09043 AT %R09043 : WORD; (* *)
+    R09044 AT %R09044 : WORD; (* *)
+    T00001 AT %T00001 : BOOL; (* *)
+    T1_ALRM AT %M00173 : BOOL; (* Tank 1 in alarm state *)
+    T1_STP AT %M00180 : BOOL; (* Tank 1 stopped *)
+    T3_ALR AT %M00174 : BOOL; (* Tank 3 in alarm state. *)
+    T3_STP AT %M00181 : BOOL; (* Tank 3 stopped *)
+    T45_ALR AT %M00175 : BOOL; (* Tanks 4,5 in alarm state. *)
+    T45_STP AT %M00182 : BOOL; (* Tanks 4,5 stopped HMI *)
+    TMP1ALM AT %R00151 : WORD; (* temp alarms 1 *)
+    TMP2ALM AT %R00152 : WORD; (* temp alarms 2 *)
+    TMP3ALM AT %R00153 : WORD; (* temp alarms 3 *)
+    TMP4ALM AT %R00154 : WORD; (* temp alarms 4 *)
+    TMP6ALM AT %R00150 : WORD; (* 6 registers to keep temp. alarms *)
+END_VAR
+
+(* Rung 1 - Alarms state changed (user:Cont) *)
+(*
+ * Block Instruction Analysis: MOVE_INT
+ * This instruction moves a constant integer value into a register.
+ * Source:      Constant value 0
+ * Destination: ALM_STB (%R00160)
+ *)
+ALM_STB := 0;
+
+(*
+ * Block Instruction Analysis: MOVE_BOOL
+ * This instruction packs a series of consecutive boolean variables (bits)
+ * into the bits of a destination WORD register.
+ * Source:      7 bits starting at A_ALARM (%M00170)
+ * Destination: ALM_STB (%R00160)
+ *)
+ALM_STB.0 := A_ALARM;
+ALM_STB.1 := B_ALARM;
+ALM_STB.2 := C_ALARM;
+ALM_STB.3 := T1_ALRM;
+ALM_STB.4 := T3_ALR;
+ALM_STB.5 := T45_ALR;
+ALM_STB.6 := BRL_ALR;
+
+IF (ALM_STB <> ALM_STA) THEN
+    ALM_USR := TRUE;
+END_IF;
+
+(* Rung 2 *)
+A_VALV();
+
+(* Rung 3 *)
+A_PUMP();
+
+(* Rung 4 *)
+A_FQC();
+
+(* Rung 5 - Alarms state changed (process) *)
+(*
+ * Block Instruction Analysis: MOVE_BOOL
+ * This instruction packs a series of consecutive boolean variables (bits)
+ * into the bits of a destination WORD register.
+ * Source:      7 bits starting at A_ALARM (%M00170)
+ * Destination: ALM_STA (%R00161)
+ *)
+ALM_STA.0 := A_ALARM;
+ALM_STA.1 := B_ALARM;
+ALM_STA.2 := C_ALARM;
+ALM_STA.3 := T1_ALRM;
+ALM_STA.4 := T3_ALR;
+ALM_STA.5 := T45_ALR;
+ALM_STA.6 := BRL_ALR;
+
+IF (ALM_STA <> ALM_STB) THEN
+    ALM_CMP := TRUE;
+END_IF;
+
+(* Rung 6 - COMMENT0 *)
+
+(* Rung 7 - Alarms state changed (user:Cont) *)
+IF ALM_USR THEN
+    (*
+     * Block Instruction Analysis: MOVE_WORD
+     * This instruction copies a block of WORDs from a source location to a destination.
+     * Source:      ALRM_96 (%R09040)
+     * Destination: TMP6ALM (%R00150)
+     * Address Range: Reads 6 WORDs from memory address %R09040 to %R09045.
+     * Address Range: Writes 6 WORDs to memory address %R00150 to %R00155.
+     *)
+    TMP6ALM := ALRM_96;
+    TMP1ALM := R09041;
+    TMP2ALM := R09042;
+    TMP3ALM := R09043;
+    TMP4ALM := R09044;
+    (* Note: The 6th WORD is moved from %R09045 to %R00155, for which no variable names were provided. *)
+
+    ALM_USR := FALSE;
+END_IF;
+
+IF ALM_CMP THEN
+    ALM_CMP := FALSE;
+END_IF;
+
+(* Rung 8 *)
+T00001 := (A_STOP AND A_ALARM)
+    OR (B_STOP AND B_ALARM)
+    OR (C_STOP AND C_ALARM)
+    OR (T1_STP AND T1_ALRM)
+    OR (T3_STP AND T3_ALR)
+    OR (T45_STP AND T45_ALR)
+    OR BRL_ALR;
+
+(* Rung 9 - COMMENT1 *)
+
+(* Rung 10 - Valve 1-80 alarm,+ 16 status *)
+IF ALW_ON AND T00001 THEN
+    (*
+     * Block Instruction Analysis: OR_WORD
+     * Performs a bitwise OR operation between two WORDs and stores the result in a destination WORD.
+     * Operation: ALRM_96 (%R09040) := ALRM_96 (%R09040) OR TMP6ALM (%R00150)
+     *)
+    ALRM_96 := ALRM_96 OR TMP6ALM;
+
+    (*
+     * Block Instruction Analysis: OR_WORD
+     * Performs a bitwise OR operation between two WORDs and stores the result in a destination WORD.
+     * Operation: R09041 (%R09041) := R09041 (%R09041) OR TMP1ALM (%R00151)
+     *)
+    R09041 := R09041 OR TMP1ALM;
+
+    (*
+     * Block Instruction Analysis: OR_WORD
+     * Performs a bitwise OR operation between two WORDs and stores the result in a destination WORD.
+     * Operation: R09042 (%R09042) := R09042 (%R09042) OR TMP2ALM (%R00152)
+     *)
+    R09042 := R09042 OR TMP2ALM;
+END_IF;
+
+(* Rung 11 *)
+IF ALW_ON AND T00001 THEN
+    (*
+     * Block Instruction Analysis: OR_WORD
+     * Performs a bitwise OR operation between two WORDs and stores the result in a destination WORD.
+     * Operation: R09043 (%R09043) := R09043 (%R09043) OR TMP3ALM (%R00153)
+     *)
+    R09043 := R09043 OR TMP3ALM;
+
+    (*
+     * Block Instruction Analysis: OR_WORD
+     * Performs a bitwise OR operation between two WORDs and stores the result in a destination WORD.
+     * Operation: R09044 (%R09044) := R09044 (%R09044) OR TMP4ALM (%R00154)
+     *)
+    R09044 := R09044 OR TMP4ALM;
+END_IF;

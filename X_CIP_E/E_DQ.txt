@@ -1,0 +1,96 @@
+(*!
+@purpose
+This program (`E_DQ.txt`) is the digital output mapping layer for the "CIP E" process, serving as the counterpart to `E_DI.txt`. Its sole function is to translate the internal software commands, represented by memory bits (`%M`), into physical actions by mapping them to the digital output terminals (`%Q`) of the PLC.
+
+This abstraction layer is the final step in the control logic's execution path for Line E. When the main logic (e.g., `E_GNACT.txt`) and operator arbitration logic (`E_OPER.txt`) decide a device should be turned on, they set an internal `*_Oper` flag. This program then takes that flag and energizes the corresponding physical output that is wired to the device in the field.
+
+@inputs
+- `XV*_Oper` and `P*_Oper` variables (`%M` addresses) (BOOL): These are the internal memory flags representing the final, arbitrated "operate" command for each valve and pump in the CIP E process.
+
+@outputs
+- `Q00129` through `Q00138` (BOOL): These are the physical digital output channels on the PLC's output modules. Energizing one of these outputs sends voltage to a field device. For example:
+    - `Q00129` energizes the solenoid for valve XV-4208.
+    - `Q00138` energizes the motor starter for pump P-4269.
+
+@notes
+- This code is for a GE/Emerson RX3i PLC and is written in Structured Text (ST).
+- The original comments are in Hebrew, with "יציאה דיגיטלית" meaning "Digital Output".
+- This program contains only direct one-to-one assignments. It is a critical component for linking the PLC's software logic to the real-world hardware it controls.
+*)
+VAR_GLOBAL
+	Q00129 AT %Q00129 : BOOL; (*יציאה דיגיטלית*)
+	Q00130 AT %Q00130 : BOOL; (*יציאה דיגיטלית*)
+	Q00131 AT %Q00131 : BOOL; (*יציאה דיגיטלית*)
+	Q00132 AT %Q00132 : BOOL; (*יציאה דיגיטלית*)
+	Q00133 AT %Q00133 : BOOL; (*יציאה דיגיטלית*)
+	Q00134 AT %Q00134 : BOOL; (*יציאה דיגיטלית*)
+	Q00135 AT %Q00135 : BOOL; (*יציאה דיגיטלית*)
+	Q00136 AT %Q00136 : BOOL; (*יציאה דיגיטלית*)
+	Q00137 AT %Q00137 : BOOL; (*יציאה דיגיטלית*)
+	Q00138 AT %Q00138 : BOOL; (*יציאה דיגיטלית*)
+	XV4208_Oper AT %M01681 : BOOL; (*פקודה לשסתום*)
+	XV4206_Oper AT %M01682 : BOOL; (*פקודה לשסתום*)
+	XV4202_Oper AT %M01683 : BOOL; (*פקודה לשסתום*)
+	XV4211_Oper AT %M01685 : BOOL; (*פקודה לשסתום*)
+	XV4225_Oper AT %M01686 : BOOL; (*פקודה לשסתום*)
+	XV4236_Oper AT %M01687 : BOOL; (*פקודה לשסתום*)
+	XV4234_Oper AT %M01688 : BOOL; (*פקודה לשסתום*)
+	XV4231_Oper AT %M01690 : BOOL; (*פקודה לשסתום*)
+	XV4281_Oper AT %M01691 : BOOL; (*פקודה לשסתום*)
+	P4269_Oper AT %M01692 : BOOL; (*פקודת הפעלה*)
+END_VAR
+
+(* Rung 1: XV4208_Cmd    CIP_E Return To Water Recovery Tank *)
+
+(* Rung 2: יציאה דיגיטלית *)
+Q00129 := XV4208_Oper;
+
+(* Rung 3: XV4206_Cmd    CIP_E Return To Acid Tank *)
+
+(* Rung 4: יציאה דיגיטלית *)
+Q00130 := XV4206_Oper;
+
+(* Rung 5: XV4202	CIP_E Return To Soda1 Tank
+  *)
+
+(* Rung 6: יציאה דיגיטלית *)
+Q00131 := XV4202_Oper;
+
+(* Rung 7: XV4211_Cmd  CIP_E Return To Drain *)
+
+(* Rung 8: יציאה דיגיטלית *)
+Q00132 := XV4211_Oper;
+
+(* Rung 9: XV4225	CIP_E From Water Recovery Tank
+  *)
+
+(* Rung 10: יציאה דיגיטלית *)
+Q00133 := XV4225_Oper;
+
+(* Rung 11: XV4236_Cmd  CIP_E From Acid Tank *)
+
+(* Rung 12: יציאה דיגיטלית *)
+Q00134 := XV4236_Oper;
+
+(* Rung 13: XV4234	CIP_E From Soda2 Tank
+  *)
+
+(* Rung 14: יציאה דיגיטלית *)
+Q00135 := XV4234_Oper;
+
+(* Rung 15: XV4231	CIP_E Fresh Water
+  *)
+
+(* Rung 16: יציאה דיגיטלית *)
+Q00136 := XV4231_Oper;
+
+(* Rung 17: XV4281	CIP_E  To Drain
+  *)
+
+(* Rung 18: יציאה דיגיטלית *)
+Q00137 := XV4281_Oper;
+
+(* Rung 19: P4269 Start	CIP_E Pump *)
+
+(* Rung 20: יציאה דיגיטלית *)
+Q00138 := P4269_Oper;

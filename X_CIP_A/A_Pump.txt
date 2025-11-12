@@ -1,0 +1,154 @@
+(*!
+@purpose
+This program (`A_Pump.txt`) provides critical safety and operational monitoring for the main pumps in the CIP system. Its sole function is to detect discrepancies between a pump's commanded state (the output signal telling it to turn on) and its actual feedback state (the input signal confirming it is running).
+
+If a pump is commanded to start, but the corresponding "RUN" feedback is not received within a configurable time delay (`PMPAPRD`), the program will set a specific alarm flag for that pump's associated system (e.g., CIP A, Acid Tank).
+
+@inputs
+- `Q00072`, `P4065`, `P4066`, `P4067`, `P4068`, `P4069` (BOOL): These are the PLC output variables (`%Q`) that command the various pumps to run.
+- `P3084`, `P3082`, `P3083`, `P3085`, `P3088`, `P3089` (BOOL): These are the PLC input variables (`%I`) that provide the run feedback from the pump motor starters. They are TRUE when the pump is physically running.
+- `PMPAPRD` (INT): A global integer value that defines the alarm delay time in tenths of a second. For example, a value of 50 corresponds to a 5-second delay.
+
+@outputs
+- `A_ALARM`, `B_ALARM`, `C_ALARM` (BOOL): Alarms for the main CIP lines (A, B, C).
+- `T3_ALR` (BOOL): Alarm for the Acid Tank system.
+- `T45_ALR` (BOOL): Alarm for the Soda Tank system.
+- `BRL_ALR` (BOOL): Alarm for the Barrel system.
+- `ALRM_96` (WORD): A global alarm WORD where the individual alarm bits from this program are packed for easy access by HMI or SCADA systems. The first 6 bits of this word correspond to the 6 pump alarms monitored here.
+
+@notes
+- This code is for a GE/Emerson RX3i PLC and is written in Structured Text (ST).
+- The logic uses six independent ON-delay timers (`TON`), one for each monitored pump.
+- The condition `(Command AND NOT Feedback)` is a standard way to detect a "failure to start" condition for a motor in industrial automation.
+- This program is purely for monitoring and alarm generation; it does not contain any process control logic itself.
+*)
+VAR_GLOBAL
+	A_ALARM AT %M00170 : BOOL; (* CIP A in alarm state. *)
+	ALRM_96 AT %R09040 : WORD; (* Valve 1-80 alarm,+ 16 status *)
+	B_ALARM AT %M00171 : BOOL; (* CIP B in alarm state. *)
+	BRL_ALR AT %M00176 : BOOL; (* Barrel in alarm state. *)
+	C_ALARM AT %M00172 : BOOL; (* CIP C in alarm state. *)
+	P3082 AT %I00082 : BOOL; (* SIPS "B" PUMP "RUN" *)
+	P3083 AT %I00083 : BOOL; (* SIPS "C" PUMP "RUN" *)
+	P3084 AT %I00084 : BOOL; (* CIPR "C" PUMP "RUN" *)
+	P3085 AT %I00085 : BOOL; (* ASID HITING CIRCULATION PUMP "R *)
+	P3088 AT %I00088 : BOOL; (* SODA TANK 1, 2 HITING CIRCULATI *)
+	P3089 AT %I00089 : BOOL; (* SIPS "A" PUMP "RUN" *)
+	P4065 AT %Q00065 : BOOL; (* SIPS "B" PUMP TO "RUN" *)
+	P4066 AT %Q00066 : BOOL; (* SIPS "C" PUMP TO "RUN" *)
+	P4067 AT %Q00067 : BOOL; (* ASID HITING CIRCULATION PUMP TO *)
+	P4068 AT %Q00068 : BOOL; (* SODA TANK 1, 2 HITING CIRCULATI *)
+	P4069 AT %Q00069 : BOOL; (* CIPS "A" PUMP TO "RUN" *)
+	PMPAPRD AT %R00004 : INT; (* Pump alarm time period. *)
+	Q00072 AT %Q00072 : BOOL;
+	T00001 AT %T00001 : BOOL;
+	T00002 AT %T00002 : BOOL;
+	T00003 AT %T00003 : BOOL;
+	T00004 AT %T00004 : BOOL;
+	T00005 AT %T00005 : BOOL;
+	T00006 AT %T00006 : BOOL;
+	T3_ALR AT %M00174 : BOOL; (* Tank 3 in alarm state. *)
+	T45_ALR AT %M00175 : BOOL; (* Tanks 4,5 in alarm state. *)
+	TMRA032 AT %R00393 : ARRAY [0..3] OF WORD; (* Alarm timer 032 *)
+	TMRA033 AT %R00396 : ARRAY [0..3] OF WORD; (* Alarm timer 033 *)
+	TMRA034 AT %R00399 : ARRAY [0..3] OF WORD; (* Alarm timer 034 *)
+	TMRA035 AT %R00402 : ARRAY [0..3] OF WORD; (* Alarm timer 035 *)
+	TMRA036 AT %R00405 : ARRAY [0..3] OF WORD; (* Alarm timer 036 *)
+	TMRA037 AT %R00408 : ARRAY [0..3] OF WORD; (* Alarm timer 037 *)
+END_VAR
+
+VAR
+	TON_Rung1 : TON;
+	TON_Rung2 : TON;
+	TON_Rung3 : TON;
+	TON_Rung4 : TON;
+	TON_Rung5 : TON;
+	TON_Rung6 : TON;
+END_VAR
+
+(* Rung 1 *)
+// The TMR_TENTHS instruction is a proprietary On-Delay Timer that uses a preset in 1/10th seconds.
+// This is translated to a standard IEC 61131-3 TON (On-Delay Timer) function block.
+// The preset time (PT) is calculated by multiplying the input value from PMPAPRD by 100 to convert from tenths of a second to milliseconds required by the TIME type.
+TON_Rung1(IN := Q00072 AND NOT P3084, PT := INT_TO_TIME(PMPAPRD * 100));
+T00001 := TON_Rung1.Q;
+
+(* Rung 2 *)
+// The TMR_TENTHS instruction is a proprietary On-Delay Timer that uses a preset in 1/10th seconds.
+// This is translated to a standard IEC 61131-3 TON (On-Delay Timer) function block.
+// The preset time (PT) is calculated by multiplying the input value from PMPAPRD by 100 to convert from tenths of a second to milliseconds required by the TIME type.
+TON_Rung2(IN := P4065 AND NOT P3082, PT := INT_TO_TIME(PMPAPRD * 100));
+T00002 := TON_Rung2.Q;
+
+(* Rung 3 *)
+// The TMR_TENTHS instruction is a proprietary On-Delay Timer that uses a preset in 1/10th seconds.
+// This is translated to a standard IEC 61131-3 TON (On-Delay Timer) function block.
+// The preset time (PT) is calculated by multiplying the input value from PMPAPRD by 100 to convert from tenths of a second to milliseconds required by the TIME type.
+TON_Rung3(IN := P4066 AND NOT P3083, PT := INT_TO_TIME(PMPAPRD * 100));
+T00003 := TON_Rung3.Q;
+
+(* Rung 4 *)
+// The TMR_TENTHS instruction is a proprietary On-Delay Timer that uses a preset in 1/10th seconds.
+// This is translated to a standard IEC 61131-3 TON (On-Delay Timer) function block.
+// The preset time (PT) is calculated by multiplying the input value from PMPAPRD by 100 to convert from tenths of a second to milliseconds required by the TIME type.
+TON_Rung4(IN := P4067 AND NOT P3085, PT := INT_TO_TIME(PMPAPRD * 100));
+T00004 := TON_Rung4.Q;
+
+(* Rung 5 *)
+// The TMR_TENTHS instruction is a proprietary On-Delay Timer that uses a preset in 1/10th seconds.
+// This is translated to a standard IEC 61131-3 TON (On-Delay Timer) function block.
+// The preset time (PT) is calculated by multiplying the input value from PMPAPRD by 100 to convert from tenths of a second to milliseconds required by the TIME type.
+TON_Rung5(IN := P4068 AND NOT P3088, PT := INT_TO_TIME(PMPAPRD * 100));
+T00005 := TON_Rung5.Q;
+
+(* Rung 6 *)
+// The TMR_TENTHS instruction is a proprietary On-Delay Timer that uses a preset in 1/10th seconds.
+// This is translated to a standard IEC 61131-3 TON (On-Delay Timer) function block.
+// The preset time (PT) is calculated by multiplying the input value from PMPAPRD by 100 to convert from tenths of a second to milliseconds required by the TIME type.
+TON_Rung6(IN := P4069 AND NOT P3089, PT := INT_TO_TIME(PMPAPRD * 100));
+T00006 := TON_Rung6.Q;
+
+(* Rung 7: Valve 1-80 alarm,+ 16 status *)
+// Block Analysis: ARRAY_MOVE_BOOL
+// This non-standard function block packs a series of boolean values into the individual bits of a WORD destination.
+// - Source Start: T00001 (%T00001)
+// - Destination: ALRM_96 (%R09040)
+// - Number of Elements: 6
+// - Operation: The states of the 6 consecutive boolean variables starting from T00001 (T00001, T00002, ..., T00006)
+//   are written to the first 6 bits of the WORD variable ALRM_96 (ALRM_96.0, ALRM_96.1, ..., ALRM_96.5).
+ALRM_96.0 := T00001;
+ALRM_96.1 := T00002;
+ALRM_96.2 := T00003;
+ALRM_96.3 := T00004;
+ALRM_96.4 := T00005;
+ALRM_96.5 := T00006;
+
+(* Rung 8: Barrel in alarm state. *)
+IF T00001 THEN
+	BRL_ALR := TRUE;
+END_IF;
+
+(* Rung 9: CIP B in alarm state. *)
+IF T00002 THEN
+	B_ALARM := TRUE;
+END_IF;
+
+(* Rung 10: CIP C in alarm state. *)
+IF T00003 THEN
+	C_ALARM := TRUE;
+END_IF;
+
+(* Rung 11: Tank 3 in alarm state. *)
+IF T00004 THEN
+	T3_ALR := TRUE;
+END_IF;
+
+(* Rung 12: CIP A in alarm state. *)
+IF T00006 THEN
+	A_ALARM := TRUE;
+END_IF;
+
+(* Rung 13: Tanks 4,5 in alarm state. *)
+IF T00005 THEN
+	T45_ALR := TRUE;
+END_IF;

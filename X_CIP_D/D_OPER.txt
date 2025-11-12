@@ -1,0 +1,236 @@
+(*!
+@purpose
+This program (`D_OPER.txt`) serves as the final command arbitration logic for all operable devices (valves and pumps) on the "CIP D" line. Its primary responsibility is to decide whether a device should be controlled by the automatic sequence or by a manual command from an operator.
+
+For each device, it implements a standard "Auto/Manual Station" logic pattern:
+- If the device is in **Auto mode** (`*_Man_Auto` is FALSE), the final command (`*_Oper`) is driven by the automatic logic (`*_Cmd`), but only if there are no overriding interlocks or system faults.
+- If the device is in **Manual mode** (`*_Man_Auto` is TRUE), the automatic logic is ignored, and the final command is driven directly by the operator's manual pushbuttons (`*_ManOn`).
+
+This ensures a clear and safe distinction between automatic and manual control. The program also manages the speed setpoint for the variable-speed CIP pump.
+
+@inputs
+- `*_Cmd`: A set of boolean flags from the main sequencer (`D_GNACT.txt`) representing the desired state of each device in automatic mode.
+- `*_Man_Auto`: A set of boolean flags, typically from an HMI, that switch a device between Manual (TRUE) and Auto (FALSE) mode.
+- `*_ManOn`: A set of boolean flags, typically from HMI pushbuttons, for manually commanding a device on when it is in Manual mode.
+- `D_Farm_FLT`, `Rx_Cooker_Fault`: High-level fault flags that serve as safety interlocks, preventing automatic operation if a fault is present.
+- `*_Intrlk`: Individual interlock flags for specific devices.
+- `SP_Pump_Speed`: The desired speed setpoint for the main pump when it is running.
+
+@outputs
+- `*_Oper`: The final, arbitrated "operate" command for each device. This is the signal that gets mapped to the physical outputs in `D_DQ.txt`.
+- `P4169_SC`: The speed control setpoint for the main CIP D pump. It is set to the configured speed when the pump is commanded to run and to 0.0 when it is stopped.
+
+@notes
+- This code is for a GE/Emerson RX3i PLC and is written in Structured Text (ST).
+- This program is a critical layer for operator interaction, providing the necessary logic to allow manual intervention while maintaining safety interlocks for automatic operation.
+- The consistent `(Auto AND NOT Manual) OR (Manual_Cmd AND Manual)` pattern is a fundamental and robust design for any system requiring both automatic and manual control.
+*)
+VAR_GLOBAL
+	D_Farm_FLT AT %M00640 : BOOL; (* General Fault CIP D *)
+	M02050 AT %M02050 : BOOL; (* CIP Soda Tank2 Canceled *)
+	P4169_Intrlk AT %M00632 : BOOL; (* *)
+	P4169_Man_Auto AT %M00532 : BOOL; (* Manual =1 *)
+	P4169_ManOn AT %M00512 : BOOL; (* *)
+	P4169_Oper AT %M00692 : BOOL; (* *)
+	P4169_SC AT %R09150 : REAL; (* CIP_D Pump  Speed Control  0-100% *)
+	P4169_Start_Cmd AT %M00712 : BOOL; (* CIP_D Pump *)
+	Rx_Cooker_Fault AT %M00805 : BOOL; (* Signal From Cooker *)
+	Rx_Hold_CIP_Pump AT %M00802 : BOOL; (* Signal From Cooker *)
+	SP_Pump_Speed AT %R09141 : REAL; (* 0-100% *)
+	XV4102_Cmd AT %M00703 : BOOL; (* CIP_D Return To Soda1 Tank *)
+	XV4102_Intrlk AT %M00623 : BOOL; (* XV40102 Interlock *)
+	XV4102_Man_Auto AT %M00523 : BOOL; (* XV40102 Manual =1 *)
+	XV4102_ManOn AT %M00503 : BOOL; (* XV40102 Manual On *)
+	XV4102_Oper AT %M00683 : BOOL; (* CIP_D Soda Returen *)
+	XV4104_Cmd AT %M00704 : BOOL; (* CIP_D Return To Soda2 Tank *)
+	XV4104_Intrlk AT %M00624 : BOOL; (* XV40104 Interlock *)
+	XV4104_Man_Auto AT %M00524 : BOOL; (* XV40104 Manual =1 *)
+	XV4104_ManOn AT %M00504 : BOOL; (* XV40104 Manual On *)
+	XV4104_Oper AT %M00684 : BOOL; (* CIP_D Soda Returen *)
+	XV4106_Cmd AT %M00702 : BOOL; (* CIP_D Return To Acid Tank *)
+	XV4106_Intrlk AT %M00622 : BOOL; (* XV40106 Interlock *)
+	XV4106_Man_Auto AT %M00522 : BOOL; (* XV40106 Manual =1 *)
+	XV4106_ManOn AT %M00502 : BOOL; (* XV40106 Manual On *)
+	XV4106_Oper AT %M00682 : BOOL; (* CIP_D Acid Returen *)
+	XV4108_Cmd AT %M00701 : BOOL; (* CIP_D Return To Water Recovery Tank *)
+	XV4108_Intrlk AT %M00621 : BOOL; (* XV40108 Interlock *)
+	XV4108_Man_Auto AT %M00521 : BOOL; (* XV40108 Manual =1 *)
+	XV4108_ManOn AT %M00501 : BOOL; (* XV40108 Manual On *)
+	XV4108_Oper AT %M00681 : BOOL; (* *)
+	XV4111_Cmd AT %M00705 : BOOL; (* CIP_D Return To Drain *)
+	XV4111_Intrlk AT %M00625 : BOOL; (* XV40111 Interlock *)
+	XV4111_Man_Auto AT %M00525 : BOOL; (* XV40111 Manual =1 *)
+	XV4111_ManOn AT %M00505 : BOOL; (* XV40111 Manual On *)
+	XV4111_Oper AT %M00685 : BOOL; (* *)
+	XV4125_Cmd AT %M00706 : BOOL; (* CIP_D From Water Recovery Tank *)
+	XV4125_Intrlk AT %M00626 : BOOL; (* XV40125 Interlock *)
+	XV4125_Man_Auto AT %M00526 : BOOL; (* XV40125 Manual =1 *)
+	XV4125_ManOn AT %M00506 : BOOL; (* XV40125 Manual On *)
+	XV4125_Oper AT %M00686 : BOOL; (* *)
+	XV4128_Cmd AT %M00709 : BOOL; (* CIP_D From Soda2 Tank *)
+	XV4128_Intrlk AT %M00629 : BOOL; (* XV40128 Interlock *)
+	XV4128_Man_Auto AT %M00529 : BOOL; (* XV40128 Manual =1 *)
+	XV4128_ManOn AT %M00509 : BOOL; (* XV40128 Manual On *)
+	XV4128_Oper AT %M00689 : BOOL; (* *)
+	XV4131_Cmd AT %M00710 : BOOL; (* CIP_D Fresh Water *)
+	XV4131_Intrlk AT %M00630 : BOOL; (* XV40131 Interlock *)
+	XV4131_Man_Auto AT %M00530 : BOOL; (* XV40131 Manual =1 *)
+	XV4131_ManOn AT %M00510 : BOOL; (* XV40131 Manual On *)
+	XV4131_Oper AT %M00690 : BOOL; (* *)
+	XV4134_Cmd AT %M00708 : BOOL; (* CIP_D From Soda1 Tank *)
+	XV4134_Intrlk AT %M00628 : BOOL; (* XV40134 Interlock *)
+	XV4134_Man_Auto AT %M00528 : BOOL; (* XV40134 Manual =1 *)
+	XV4134_ManOn AT %M00508 : BOOL; (* XV40134 Manual On *)
+	XV4134_Oper AT %M00688 : BOOL; (* *)
+	XV4136_Cmd AT %M00707 : BOOL; (* CIP_D From Acid Tank *)
+	XV4136_Intrlk AT %M00627 : BOOL; (* XV40136 Interlock *)
+	XV4136_Man_Auto AT %M00527 : BOOL; (* XV40136 Manual =1 *)
+	XV4136_ManOn AT %M00507 : BOOL; (* XV40136 Manual On *)
+	XV4136_Oper AT %M00687 : BOOL; (* *)
+	XV4181_Cmd AT %M00711 : BOOL; (* CIP_D  To Drain *)
+	XV4181_Intrlk AT %M00631 : BOOL; (* XV40181 Interlock *)
+	XV4181_Man_Auto AT %M00531 : BOOL; (* XV40181 Manual =1 *)
+	XV4181_ManOn AT %M00511 : BOOL; (* XV40181 Manual On *)
+	XV4181_Oper AT %M00691 : BOOL; (* *)
+END_VAR
+
+(* Rung 1: COMMENT0 *)
+
+(* Rung 2 *)
+XV4108_Oper := ((XV4108_Cmd AND NOT XV4108_Man_Auto AND NOT D_Farm_FLT AND NOT Rx_Cooker_Fault)
+				OR (XV4108_ManOn AND XV4108_Man_Auto)) AND NOT XV4108_Intrlk;
+
+(* Rung 3: XV40108 Manual On *)
+IF NOT XV4108_Man_Auto THEN
+	XV4108_ManOn := FALSE;
+END_IF;
+
+(* Rung 4: COMMENT1 *)
+
+(* Rung 5: CIP_D Acid Returen *)
+XV4106_Oper := (XV4106_Cmd AND NOT XV4106_Man_Auto AND NOT D_Farm_FLT AND NOT Rx_Cooker_Fault AND NOT XV4106_Intrlk) OR (XV4106_ManOn AND XV4106_Man_Auto);
+
+(* Rung 6: XV40106 Manual On *)
+IF NOT XV4106_Man_Auto THEN
+	XV4106_ManOn := FALSE;
+END_IF;
+
+(* Rung 7: COMMENT2 *)
+
+(* Rung 8: CIP_D Soda Returen *)
+XV4102_Oper := ((XV4102_Cmd AND NOT XV4102_Man_Auto AND NOT D_Farm_FLT AND NOT Rx_Cooker_Fault)
+				OR (XV4102_ManOn AND XV4102_Man_Auto)) AND NOT XV4102_Intrlk) ;
+
+(* Rung 9: XV40102 Manual On *)
+IF NOT XV4102_Man_Auto THEN
+	XV4102_ManOn := FALSE;
+END_IF;
+
+(* Rung 10: 28/12/2023 Canceled ************************************Soda Tank 2 ****************** *)
+
+(* Rung 11: CIP_D Soda Returen *)
+XV4104_Oper := ((XV4104_Cmd AND NOT XV4104_Man_Auto AND NOT D_Farm_FLT AND NOT Rx_Cooker_Fault)
+				OR(XV4104_ManOn AND XV4104_Man_Auto)) AND NOT XV4104_Intrlk AND M02050;
+
+(* Rung 12: XV40104 Manual On *)
+IF NOT XV4104_Man_Auto THEN
+	XV4104_ManOn := FALSE;
+END_IF;
+
+(* Rung 13: COMMENT4 *)
+
+(* Rung 14 *)
+XV4111_Oper := ((XV4111_Cmd AND NOT XV4111_Man_Auto AND NOT D_Farm_FLT AND NOT Rx_Cooker_Fault)
+				 OR (XV4111_ManOn AND XV4111_Man_Auto) AND NOT XV4111_Intrlk;
+
+(* Rung 15: XV40111 Manual On *)
+IF NOT XV4111_Man_Auto THEN
+	XV4111_ManOn := FALSE;
+END_IF;
+
+(* Rung 16: COMMENT5 *)
+
+(* Rung 17 *)
+XV4125_Oper := ((XV4125_Cmd AND NOT XV4125_Man_Auto AND NOT D_Farm_FLT AND NOT Rx_Cooker_Fault)
+				 OR(XV4125_ManOn AND XV4125_Man_Auto)AND NOT XV4125_Intrlk;
+
+(* Rung 18: XV40125 Manual On *)
+IF NOT XV4125_Man_Auto THEN
+	XV4125_ManOn := FALSE;
+END_IF;
+
+(* Rung 19: COMMENT6 *)
+
+(* Rung 20 *)
+XV4136_Oper := ((XV4136_Cmd AND NOT XV4136_Man_Auto AND NOT D_Farm_FLT AND NOT Rx_Cooker_Fault)
+				OR (XV4136_ManOn AND XV4136_Man_Auto))AND NOT XV4136_Intrlk;
+
+(* Rung 21: XV40136 Manual On *)
+IF NOT XV4136_Man_Auto THEN
+	XV4136_ManOn := FALSE;
+END_IF;
+
+(* Rung 22: COMMENT7 *)
+
+(* Rung 23 *)
+XV4134_Oper := ((XV4134_Cmd AND NOT XV4134_Man_Auto AND NOT D_Farm_FLT AND NOT Rx_Cooker_Fault)
+				 OR (XV4134_ManOn AND XV4134_Man_Auto)AND NOT XV4134_Intrlk;
+
+(* Rung 24: XV40134 Manual On *)
+IF NOT XV4134_Man_Auto THEN
+	XV4134_ManOn := FALSE;
+END_IF;
+
+(* Rung 25: COMMENT8 *)
+
+(* Rung 26 *)
+XV4128_Oper := ((XV4128_Cmd AND NOT XV4128_Man_Auto AND NOT D_Farm_FLT AND NOT Rx_Cooker_Fault)
+				OR (XV4128_ManOn AND XV4128_Man_Auto)AND NOT XV4128_Intrlk;
+
+(* Rung 27: XV40128 Manual On *)
+IF NOT XV4128_Man_Auto THEN
+	XV4128_ManOn := FALSE;
+END_IF;
+
+(* Rung 28: COMMENT9 *)
+
+(* Rung 29 *)
+XV4131_Oper := (XV4131_Cmd AND NOT XV4131_Man_Auto AND NOT D_Farm_FLT AND NOT Rx_Cooker_Fault)
+				OR (XV4131_ManOn AND XV4131_Man_Auto)AND NOT XV4131_Intrlk;
+
+(* Rung 30: XV40131 Manual On *)
+IF NOT XV4131_Man_Auto THEN
+	XV4131_ManOn := FALSE;
+END_IF;
+
+(* Rung 31: COMMENT10 *)
+
+(* Rung 32 *)
+XV4181_Oper := ((XV4181_Cmd AND NOT XV4181_Man_Auto AND NOT D_Farm_FLT AND NOT Rx_Cooker_Fault)
+				OR (XV4181_ManOn AND XV4181_Man_Auto)AND NOT XV4181_Intrlk ;
+
+(* Rung 33: XV40181 Manual On *)
+IF NOT XV4181_Man_Auto THEN
+	XV4181_ManOn := FALSE;
+END_IF;
+
+(* Rung 34: COMMENT11 *)
+
+(* Rung 35 *)
+P4169_Oper := ((P4169_Start_Cmd AND NOT P4169_Man_Auto AND NOT Rx_Hold_CIP_Pump AND NOT D_Farm_FLT AND NOT Rx_Cooker_Fault)
+				OR (P4169_ManOn AND P4169_Man_Auto)AND NOT P4169_Intrlk;
+
+(* Rung 36 *)
+IF NOT P4169_Man_Auto THEN
+	P4169_ManOn := FALSE;
+END_IF;
+
+(* Rung 37: CIP_D Pump  Speed Control  0-100% *)
+IF P4169_Oper THEN
+	P4169_SC := SP_Pump_Speed;
+END_IF;
+
+(* Rung 38: CIP_D Pump  Speed Control  0-100% *)
+IF NOT P4169_Oper THEN
+	P4169_SC := 0.0;
+END_IF;

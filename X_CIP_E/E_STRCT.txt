@@ -1,0 +1,504 @@
+(*!
+@purpose
+This program (`E_STRCT`) is the core state machine for the Cleaning-In-Place (CIP) process for Line E, which serves multiple reactors (R30 and R40).
+It operates as a stepper, advancing the `E_Steper` variable through a sequence of cleaning steps. This program determines which step to execute based on EGD communication signals received from the individual reactor PLCs.
+
+The program can manage several CIP cycle types, including Rinsing, Soda (Short/Long), and Acid (Short/Long), selected by the remote reactor PLCs. The state machine progresses based on timed durations, volume measurements, and sensor feedback.
+
+@inputs
+- `Rx3_CipType_R30` (%R09802) (INT): EGD input from Reactor 30 selecting the CIP cycle type.
+- `Rx3_R40_CipType` (%R09902) (INT): EGD input from Reactor 40 selecting the CIP cycle type.
+- `R30_CIP_Running`, `R40_CIP_Running` (BOOL): Flags indicating which reactor's CIP process is currently active.
+- `R30_S110`...`R40_S143` (BOOL): A series of boolean flags received via EGD, representing specific step commands.
+- `Rx_Hold_E_SEQ_R30`, `Rx_R40_Hold_E_SEQ` (BOOL): EGD signals to pause the sequence for the respective reactor.
+- `Rx_Reset_SEQ_R30`, `Rx_R40_Reset_SEQ` (BOOL): EGD signals to reset the stepper to 0.
+- `Rx_Abord_R30`, `Rx_R40_Abord` (BOOL): EGD signals to abort the sequence.
+- `RST_E` (%M01333) (BOOL): HMI button to reset the stepper.
+- `LOLVL1`-`LOLVL4` (BOOL): Low-level flags for the main water and chemical tanks.
+- `MonitorTime_R30` (%M01324) (BOOL): Boolean flag that becomes TRUE when a timed step's duration has elapsed.
+- `Monitor_Vol_R30` (%M01325) (BOOL): Boolean flag that becomes TRUE when a fill step's volume target is reached.
+- `SEC_PLS` (%G00001) (BOOL): A 1-second system clock pulse used for timing.
+
+@outputs
+- `E_Steper` (%R09251) (INT): The master register holding the current step number for the Line E CIP sequence.
+- `CIP_Type_PLC_R30` (%R09179) (INT): Latches the selected CIP type from either R30 or R40 at the start of the cycle.
+- `CIP_Rinsing_R30`, `CIP_Soda_R30_40`, `CIP_Acid_R30_40` (BOOL): Flags indicating the active cleaning type.
+- `N_Step_E` (%M01321) (BOOL): A one-shot flag that is TRUE for one scan when the stepper value changes.
+- `CIP_E_Ended` (%M01327) (BOOL): A flag set to TRUE upon successful completion of the sequence.
+- `Scan_R30` (%M01322) (BOOL): A control bit used like `Step_Jump` to ensure only one step transition occurs per scan.
+
+@notes
+- This code is for a GE/Emerson RX3i PLC and is written in Structured Text (ST).
+- The program state is primarily driven by discrete boolean signals (`R30_Sxxx`, `R40_Sxxx`) from external PLCs rather than internal conditions. This indicates a master-slave relationship where this PLC acts as the slave executing commands.
+- The `Scan_R30` variable prevents multiple state transitions within a single PLC scan, ensuring predictable behavior.
+- The `E_BITAL()` function is called to unpack the `E_Steper` integer into individual boolean step flags (e.g., `E_Step1`, `E_Step2`), which are then used by the `E_GNACT` program to control equipment.
+*)
+VAR_GLOBAL
+	(* Timer Instances *)
+	TMR_R09425 : TON;
+	TMR_R09360 : TON;
+	_Bit : BOOL;
+
+	(* Global Variables *)
+	ALW_OFF AT %S00008 : BOOL; (* Always OFF *)
+	Abort_E AT %M01332 : BOOL; (* Abort_E *)
+	Acid_L AT %M01357 : BOOL; (* Acid_L *)
+	Acid_S AT %M01356 : BOOL; (* Acid_S *)
+	CIP_Acid_R30_40 AT %M01353 : BOOL; (* CIP_Acid_R30_40 *)
+	CIP_E_Active AT %M01300 : BOOL; (* CIP_E_Active *)
+	CIP_E_Ended AT %M01327 : BOOL; (* CIP_E_Ended *)
+	CIP_E_FarmeCondition AT %M01320 : BOOL; (* CIP_E_FarmeCondition *)
+	CIP_Rinsing_R30 AT %M01351 : BOOL; (* CIP_Rinsing_R30 *)
+	CIP_Soda_R30_40 AT %M01352 : BOOL; (* CIP_Soda_R30_40 *)
+	CIP_Type_PLC_R30 AT %R09179 : INT; (* CIP_Type_PLC_R30 *)
+	E_Farm_FLT AT %M01640 : BOOL; (* General Fault CIP E *)
+	E_His_Step AT %R09253 : INT; (* E_His_Step *)
+	E_Step0 AT %M01400 : BOOL; (* E_Step0 *)
+	E_Step1 AT %M01401 : BOOL; (* E_Step1 *)
+	E_Step21 AT %M01421 : BOOL; (* E_Step21 *)
+	E_Step28 AT %M01428 : BOOL; (* E_Step28 *)
+	E_Step41 AT %M01441 : BOOL; (* E_Step41 *)
+	E_Step61 AT %M01461 : BOOL; (* E_Step61 *)
+	E_Step81 AT %M01481 : BOOL; (* E_Step81 *)
+	E_Steper AT %R09251 : INT; (* E_Steper *)
+	Elp_E AT %R09254 : INT; (* Sequence Elapsed time *)
+	FIT207_Pre AT %R09252 : INT; (* FIT207_Pre *)
+	FQ207 AT %R09280 : INT; (* FQ207 *)
+	LL1_Dly_Off_R30 AT %M01364 : BOOL; (* Off Dly *)
+	LOLVL1 AT %M00115 : BOOL; (* Low level Water *)
+	LOLVL2 AT %M00117 : BOOL; (* Low level Rec water *)
+	LOLVL3 AT %M00119 : BOOL; (* Low level Acid *)
+	LOLVL4 AT %M00112 : BOOL; (* Low level Soda1 *)
+	Monitor_Vol_R30 AT %M01325 : BOOL; (* Monitor_Vol_R30 *)
+	MonitorAct_R30 AT %R09256 : INT; (* Setp_Time_Actual Count *)
+	MonitorDwn_FQ_R30 AT %R09283 : INT; (* MonitorDwn_FQ_R30 *)
+	MonitorDwn_R30 AT %R09258 : INT; (* MonitoringCount Down *)
+	MonitorPre_R30 AT %R09257 : INT; (* Monitoring Preset Time *)
+	MonitorTime_R30 AT %M01324 : BOOL; (* MonitoringTime_E *)
+	N_Step_E AT %M01321 : BOOL; (* N_Step_E *)
+	R30_CIP_Running AT %M03001 : BOOL; (* R30_CIP_Running *)
+	R30_S110 AT %G00010 : BOOL; (* R30_S110 *)
+	R30_S111 AT %G00011 : BOOL; (* R30_S111 *)
+	R30_S112 AT %G00012 : BOOL; (* R30_S112 *)
+	R30_S113 AT %G00013 : BOOL; (* R30_S113 *)
+	R30_S114 AT %G00014 : BOOL; (* R30_S114 *)
+	R30_S120 AT %G00020 : BOOL; (* R30_S120 *)
+	R30_S121 AT %G00021 : BOOL; (* R30_S121 *)
+	R30_S122 AT %G00022 : BOOL; (* R30_S122 *)
+	R30_S123 AT %G00023 : BOOL; (* R30_S123 *)
+	R30_S130 AT %G00030 : BOOL; (* R30_S130 *)
+	R30_S131 AT %G00031 : BOOL; (* R30_S131 *)
+	R30_S132 AT %G00032 : BOOL; (* R30_S132 *)
+	R30_S133 AT %G00033 : BOOL; (* R30_S133 *)
+	R30_S140 AT %G00040 : BOOL; (* R30_S140 *)
+	R30_S141 AT %G00041 : BOOL; (* R30_S141 *)
+	R30_S142 AT %G00042 : BOOL; (* R30_S142 *)
+	R30_S150 AT %G00050 : BOOL; (* R30_S150 *)
+	R30_S151 AT %G00051 : BOOL; (* R30_S151 *)
+	R30_S152 AT %G00052 : BOOL; (* R30_S152 *)
+	R30_S154 AT %G00054 : BOOL; (* R30_S154 *)
+	R30_S160 AT %G00060 : BOOL; (* R30_S160 *)
+	R30_S161 AT %G00061 : BOOL; (* R30_S161 *)
+	R30_S162 AT %G00062 : BOOL; (* R30_S162 *)
+	R30_S163 AT %G00063 : BOOL; (* R30_S163 *)
+	R30_S170 AT %G00070 : BOOL; (* R30_S170 *)
+	R30_S171 AT %G00071 : BOOL; (* R30_S171 *)
+	R30_S172 AT %G00072 : BOOL; (* R30_S172 *)
+	R30_S173 AT %G00073 : BOOL; (* R30_S173 *)
+	R30_S180 AT %G00080 : BOOL; (* R30_S180 *)
+	R30_S181 AT %G00081 : BOOL; (* R30_S181 *)
+	R30_S182 AT %G00082 : BOOL; (* R30_S182 *)
+	R30_S183 AT %G00083 : BOOL; (* R30_S183 *)
+	R40_CIP_Running AT %M03002 : BOOL; (* Reactor 40 CIP Running *)
+	R40_S110 AT %M03010 : BOOL; (* R40_S110 *)
+	R40_S111 AT %M03011 : BOOL; (* R40_S111 *)
+	R40_S112 AT %M03012 : BOOL; (* R40_S112 *)
+	R40_S113 AT %M03013 : BOOL; (* R40_S113 *)
+	R40_S114 AT %M03014 : BOOL; (* R40_S114 *)
+	R40_S120 AT %M03020 : BOOL; (* R40_S120 *)
+	R40_S121 AT %M03021 : BOOL; (* R40_S121 *)
+	R40_S122 AT %M03022 : BOOL; (* R40_S122 *)
+	R40_S123 AT %M03023 : BOOL; (* R40_S123 *)
+	R40_S130 AT %M03030 : BOOL; (* R40_S130 *)
+	R40_S131 AT %M03031 : BOOL; (* R40_S131 *)
+	R40_S132 AT %M03032 : BOOL; (* R40_S132 *)
+	R40_S133 AT %M03033 : BOOL; (* R40_S133 *)
+	R40_S140 AT %M03040 : BOOL; (* R40_S140 *)
+	R40_S141 AT %M03041 : BOOL; (* R40_S141 *)
+	R40_S142 AT %M03042 : BOOL; (* R40_S142 *)
+	R40_S143 AT %M03043 : BOOL; (* R40_S143 *)
+	RST_E AT %M01333 : BOOL; (* HMI Button Reset Steper *)
+	Rx3_CipType_R30 AT %R09802 : INT; (* Signal From Cooker R30 *)
+	Rx3_R40_CipType AT %R09902 : INT; (* Rx3_R40_CipType *)
+	Rx_Abord_R30 AT %M01810 : BOOL; (* Rx_Abord_R30 *)
+	Rx_Cooker_Fault_R30 AT %M01805 : BOOL; (* Signal From Cooker *)
+	Rx_Hold_E_SEQ_R30 AT %M01803 : BOOL; (* Signal From Cooker *)
+	Rx_LL1_R31 AT %M01801 : BOOL; (* Signal From Cooker *)
+	Rx_R40_Abord AT %M01909 : BOOL; (* Signal From R40 *)
+	Rx_R40_Fault AT %M01904 : BOOL; (* Signal From R40 *)
+	Rx_R40_Hold_E_SEQ AT %M01902 : BOOL; (* Signal From R40 *)
+	Rx_R40_Reset_SEQ AT %M01908 : BOOL; (* Signal From R40 *)
+	Rx_Reset_SEQ_R30 AT %M01809 : BOOL; (* Rx_Reset_SEQ_R30 *)
+	Scan_R30 AT %M01322 : BOOL; (* Scan_R30 *)
+	SEC_PLS AT %G00001 : BOOL; (* SEC_PLS *)
+	Soda_L AT %M01355 : BOOL; (* Soda_L *)
+	Soda_S AT %M01354 : BOOL; (* Soda_S *)
+	STOPALL AT %M00104 : BOOL; (* Stop all processes *)
+	VolSP_E AT %R09281 : REAL; (* xxx Liters *)
+END_VAR
+
+(* Rung 1: COMMENT0 *)
+
+(* Rung 2: Off Dly *)
+TMR_R09425(IN:= NOT Rx_LL1_R31, PT:=T#60S);
+LL1_Dly_Off_R30 := TMR_R09425.Q;
+
+(* Rung 3: Enable Change Only If Process Not Runing *)
+
+(* Rung 4: CIP_Type_PLC_R30 *)
+IF E_Step0 THEN
+	CIP_Type_PLC_R30 := Rx3_CipType_R30;
+END_IF;
+
+(* Rung 5: CIP_Rinsing_R30 *)
+CIP_Rinsing_R30 := (CIP_Type_PLC_R30 = 1);
+
+(* Rung 6: Soda_S *)
+Soda_S := (CIP_Type_PLC_R30 = 12);
+
+(* Rung 7: Soda_L *)
+Soda_L := (CIP_Type_PLC_R30 = 2);
+
+(* Rung 8 *)
+_Bit := (Rx3_R40_CipType = 12);
+
+(* Rung 9: *)
+CIP_Soda_R30_40 := (_Bit OR Soda_S OR Soda_L;
+
+(* Rung 10: Acid_S *)
+Acid_S := (CIP_Type_PLC_R30 = 13);
+
+(* Rung 11: Acid_L *)
+Acid_L := (CIP_Type_PLC_R30 = 3);
+
+(* Rung 12  *)
+_Bit := (Rx3_R40_CipType = 13);
+
+(* Rung 13:  *)
+CIP_Acid_R30_40 := _Bit OR Acid_S OR Acid_L;
+
+(* Rung 14: Steper Limit *)
+
+(* Rung 15 *)
+_Bit := (E_Steper < 0);
+
+(* Rung 16: Steper *)
+IF _Bit OR (R30_CIP_Running AND (Rx_Reset_SEQ_R30 OR Rx_Abord_R30))
+		OR (R40_CIP_Running AND (Rx_R40_Reset_SEQ OR Rx_R40_Abord)) THEN
+	E_Steper := 0;
+	MonitorPre_R30 := 0;
+END_IF;
+
+(* Rung 17: Steper *)
+IF E_Steper > 90 THEN
+	E_Steper := 0;
+END_IF;
+
+(* Rung 18: Zeroing Step Time *)
+
+(* Rung 19: N_Step_E *)
+N_Step_E := (E_Steper <> E_His_Step);
+
+(* Rung 20: Update step *)
+
+(* Rung 21: E_His_Step *)
+IF N_Step_E THEN
+	E_His_Step := E_Steper;
+END_IF;
+
+(* Rung 22: Count Elapsed Time *)
+
+(* Rung 23: Sequence Elapsed time *)
+IF ((R30_CIP_Running AND NOT Rx_Hold_E_SEQ_R30) OR (R40_CIP_Running AND NOT Rx_R40_Hold_E_SEQ))
+	AND SEC_PLS AND (E_Steper > 0) THEN
+	Elp_E := Elp_E + 1;
+END_IF;
+
+(* Rung 24: Count Step Time *)
+
+(* Rung 25: Setp_Time_Actual Count *)
+IF ((R30_CIP_Running AND NOT Rx_Hold_E_SEQ_R30 AND NOT Rx_Cooker_Fault_R30)
+		OR (R40_CIP_Running AND NOT Rx_R40_Hold_E_SEQ AND NOT Rx_R40_Fault))
+    AND NOT E_Farm_FLT AND NOT E_Step0 AND SEC_PLS AND (MonitorAct_R30 < MonitorPre_R30) THEN
+	MonitorAct_R30 := MonitorAct_R30 + 1;
+END_IF;
+
+(* Rung 26: MonitoringTime_E *)
+MonitorTime_R30 := (NOT E_Step0) AND (NOT N_Step_E) AND (MonitorAct_R30 >= MonitorPre_R30);
+
+(* Rung 27: Count Down *)
+
+(* Rung 28: MonitoringCount Down *)
+MonitorDwn_R30 := MonitorPre_R30 - MonitorAct_R30;
+
+(* Rung 29: Monitor FQ *)
+
+(* Rung 30: Monitor_Vol_R30 *)
+Monitor_Vol_R30 := (E_Step1 OR E_Step21 OR E_Step28 OR E_Step41 OR E_Step61 OR E_Step81)
+					AND ((R30_CIP_Running AND NOT Rx_Hold_E_SEQ_R30 AND NOT Rx_Cooker_Fault_R30)
+						  OR (R40_CIP_Running AND NOT Rx_R40_Hold_E_SEQ AND NOT Rx_R40_Fault))
+					AND NOT N_Step_E AND NOT E_Farm_FLT AND (INT_TO_REAL(FQ207) >= VolSP_E);
+					
+
+(* Rung 31: MonitorDwn_FQ_R30 *)
+MonitorDwn_FQ_R30 := FIT207_Pre - FQ207;
+
+(* Rung 32: Reset *)
+
+(* Rung 33: Steper *)
+IF RST_E OR (R30_CIP_Running AND (Rx_Reset_SEQ_R30 OR Rx_Abord_R30))
+		 OR (R40_CIP_Running AND (Rx_R40_Reset_SEQ OR Rx_R40_Abord)) THEN
+	E_Steper := 0;
+END_IF;
+
+(* Rung 34: Sequence Elapsed time *)
+IF E_Step0 OR RST_E OR (R30_CIP_Running AND (Rx_Reset_SEQ_R30 OR Rx_Abord_R30))
+		   OR (R40_CIP_Running AND (Rx_R40_Reset_SEQ OR Rx_R40_Abord)) THEN
+	Elp_E := 0;
+END_IF;
+
+(* Rung 35: Setp_Time_Actual Count *)
+IF N_Step_E OR RST_E OR Abort_E OR E_Step0 OR (R30_CIP_Running AND (Rx_Reset_SEQ_R30 OR Rx_Abord_R30))
+										   OR (R40_CIP_Running AND (Rx_R40_Reset_SEQ OR Rx_R40_Abord)) THEN
+	MonitorAct_R30 := 0;
+	FIT207_Pre := 0;
+END_IF;
+
+(* Rung 36: Bit Allocation *)
+
+(* Rung 37: E_BITAL *)
+E_BITAL();
+
+(* Rung 38: CIP Condition *)
+
+(* Rung 39: CIP_E_FarmeCondition *)
+CIP_E_FarmeCondition := (((CIP_Acid_R30_40 AND LOLVL3) OR (CIP_Soda_R30_40 AND LOLVL4) OR CIP_Rinsing_R30)
+						AND (LOLVL2 OR LOLVL1)) AND NOT E_Farm_FLT AND E_Step0 AND NOT STOPALL;
+
+
+(* Rung 40: Step 0 Idle | 1- שטיפה ראשונה | 21- סודה | 41-שטיפת ביניים | 61- חומצה | 81- שטיפה אחרונה *)
+
+(* Rung 41: Steper *)
+IF NOT Scan_R30 AND
+				(R30_CIP_Running AND(R30_S110 OR R30_S111 OR R30_S150 OR R30_S151))
+				OR (R40_CIP_Running AND (R40_S110 OR R40_S111))) THEN
+	E_Steper := 1;
+	Scan_R30 := TRUE;
+END_IF;
+
+(* Rung 42: Step1 שטיפה ראשונה מילוי *)
+
+(* Rung 43: Steper *)
+IF (R30_CIP_Running AND (R30_S112 OR R30_S152)) OR (R40_CIP_Running AND R40_S112) THEN
+	E_Steper := 2;
+	Scan_R30 := TRUE;
+END_IF;
+
+(* Rung 44: Step2 שטיפה ריקון *)
+
+(* Rung 45: Steper *)
+IF (R30_CIP_Running AND (R30_S113 OR R30_S152)) OR (R40_CIP_Running AND R40_S113) THEN
+	E_Steper := 3;
+	Scan_R30 := TRUE;
+END_IF;
+
+(* Rung 46: Step3 שטיפה חזרה לחווה המתנה לזרימה *)
+
+(* Rung 47: Steper *)
+IF ALW_OFF THEN
+	E_Steper := 8;
+	Scan_R30 := TRUE;
+END_IF;
+
+(* Rung 48: Step8 שטיפה ראשונה סיחרור *)
+
+(* Rung 49: Steper *)
+IF (R30_CIP_Running AND (R30_S114 OR R30_S154)) OR (R40_CIP_Running AND R40_S114) THEN
+	E_Steper := 9;
+	Scan_R30 := TRUE;
+END_IF;
+
+(* Rung 50: Step9 שטיפה ראשונה פליפים *)
+
+(* Rung 51: Steper *)
+IF (R30_CIP_Running AND (R30_S120 OR R30_S160)) OR (R40_CIP_Running AND R40_S120) THEN
+	E_Steper := 21;
+	Scan_R30 := TRUE;
+END_IF;
+
+(* Rung 52: Step21 סודה מילוי *)
+
+(* Rung 53: Steper *)
+IF (R30_CIP_Running AND (R30_S121 OR R30_S161)) OR (R40_CIP_Running AND R40_S121) THEN
+	E_Steper := 22;
+	Scan_R30 := TRUE;
+END_IF;
+
+(* Rung 54: Step22 סודה ריקון *)
+
+(* Rung 55: Steper *)
+IF (R30_CIP_Running AND (R30_S122 OR R30_S162)) OR (R40_CIP_Running AND R40_S122) THEN
+	E_Steper := 23;
+	Scan_R30 := TRUE;
+END_IF;
+
+(* Rung 56: Step23 סודה חזרה לחווה המתנה לזרימה *)
+
+(* Rung 57: Steper *)
+IF (R30_CIP_Running AND (R30_S123 OR R30_S163)) OR (R40_CIP_Running AND R40_S123) THEN
+	E_Steper := 24;
+	Scan_R30 := TRUE;
+END_IF;
+
+(* Rung 58: Step24 סודה המתנה למוליכות *)
+
+(* Rung 59: Steper *)
+IF ALW_OFF THEN
+	E_Steper := 28;
+	Scan_R30 := TRUE;
+END_IF;
+
+(* Rung 60: Step28 סודה סיחרור *)
+
+(* Rung 61: Steper *)
+IF ALW_OFF THEN
+	E_Steper := 29;
+	Scan_R30 := TRUE;
+END_IF;
+
+(* Rung 62: Step61 חומצה *)
+
+(* Rung 63: Steper *)
+IF (R30_CIP_Running AND (R30_S130 OR R30_S170)) OR (R40_CIP_Running AND R40_S130) THEN
+	E_Steper := 61;
+	Scan_R30 := TRUE;
+END_IF;
+
+(* Rung 64: Step62 חומצה מילוי *)
+
+(* Rung 65: Steper *)
+IF (R30_CIP_Running AND (R30_S131 OR R30_S171)) OR (R40_CIP_Running AND R40_S131) THEN
+	E_Steper := 62;
+	Scan_R30 := TRUE;
+END_IF;
+
+(* Rung 66: Step63 חומצה ריקון *)
+
+(* Rung 67: Steper *)
+IF (R30_CIP_Running AND (R30_S132 OR R30_S172)) OR (R40_CIP_Running AND R40_S132) THEN
+	E_Steper := 63;
+	Scan_R30 := TRUE;
+END_IF;
+
+(* Rung 68: Step64 חומצה חזרה לחווה *)
+
+(* Rung 69: Steper *)
+IF (R30_CIP_Running AND (R30_S133 OR R30_S173)) OR (R40_CIP_Running AND R40_S133) THEN
+	E_Steper := 64;
+	Scan_R30 := TRUE;
+END_IF;
+
+(* Rung 70: Step68 *)
+
+(* Rung 71: Steper *)
+IF ALW_OFF THEN
+	E_Steper := 68;
+	Scan_R30 := TRUE;
+END_IF;
+
+(* Rung 72: Step69 חומצה סיחרור *)
+
+(* Rung 73: Steper *)
+IF ALW_OFF THEN
+	E_Steper := 69;
+	Scan_R30 := TRUE;
+END_IF;
+
+(* Rung 74: Step81 שטיפה אחרונה מילוי *)
+
+(* Rung 75: Steper *)
+IF (R30_CIP_Running AND (R30_S140 OR R30_S141 OR R30_S180 OR R30_S181)) OR (R40_CIP_Running AND (R40_S140 OR R40_S141)) THEN
+	E_Steper := 81;
+	Scan_R30 := TRUE;
+END_IF;
+
+(* Rung 76: Step82 שטיפה אחרונה ריקון *)
+
+(* Rung 77: Steper *)
+IF (R30_CIP_Running AND (R30_S142 OR R30_S182)) OR (R40_CIP_Running AND R40_S142) THEN
+	E_Steper := 82;
+	Scan_R30 := TRUE;
+END_IF;
+
+(* Rung 78: Step83 שטיפה אחרונה חזרה לחווה *)
+
+(* Rung 79: Steper *)
+IF ALW_OFF THEN
+	E_Steper := 83;
+	Scan_R30 := TRUE;
+END_IF;
+
+(* Rung 80: Step84 שטיפה אחרונה המתנה למוליכות *)
+
+(* Rung 81: Steper *)
+IF ALW_OFF THEN
+	E_Steper := 84;
+	Scan_R30 := TRUE;
+END_IF;
+
+(* Rung 82: Step88 שטיפה אחרונה סיחרור *)
+
+(* Rung 83: Steper *)
+IF ALW_OFF THEN
+	E_Steper := 88;
+	Scan_R30 := TRUE;
+END_IF;
+
+(* Rung 84: Step89 שטיפה אחרונה פליפים *)
+
+(* Rung 85: Steper *)
+IF ALW_OFF THEN
+	E_Steper := 89;
+	Scan_R30 := TRUE;
+END_IF;
+
+(* Rung 86: Step90 שטיפה אחרונה פליפים *)
+
+(* Rung 87: Steper *)
+IF (R30_CIP_Running AND R30_S183) OR (R40_CIP_Running AND R40_S143) THEN
+	E_Steper := 90;
+	Scan_R30 := TRUE;
+END_IF;
+
+(* Rung 88: CIP Ended *)
+
+(* Rung 89: Steper *)
+IF NOT CIP_E_Active THEN
+	E_Steper := 0;
+	Scan_R30 := TRUE;
+	CIP_E_Ended := TRUE;
+END_IF;
+
+(* Rung 90: CIP_E_Active *)
+CIP_E_Active := R30_CIP_Running OR R40_CIP_Running;
+
+(* Rung 91: CIP_E_Ended *)
+TMR_R09360(IN:= CIP_E_Ended, PT:=T#30S);
+IF TMR_R09360.Q THEN
+	CIP_E_Ended := FALSE;
+END_IF;
+
+(* Rung 92: Scan_R30 *)
+IF Scan_R30 THEN
+	Scan_R30 := FALSE;
+END_IF;

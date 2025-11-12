@@ -1,0 +1,61 @@
+(*!
+@purpose
+This program (`T1_WTR.txt`) contains the dedicated control logic for the Fresh Water Tank (Tank 1). Its primary responsibilities are to maintain the water level in the tank through automatic refilling and to provide critical status and interlock signals to the rest of the CIP system.
+
+The program's core functions are:
+1.  **Automatic Level Control:** It continuously monitors the high (`HILVL1`) and low (`LOLVL1`) level switches in the tank. When the level drops below the low-level switch, it opens the main water supply valve (`XVM001`) to begin refilling. The valve remains open until the high-level switch is activated.
+2.  **Interlock Generation:** It generates a `T1_BUSY` signal that is used as a critical interlock by the main CIP sequences. The tank is considered "busy" if it has a low level or is stopped due to an alarm. This prevents any CIP process from attempting to draw water from an unavailable tank.
+3.  **Alarm Handling:** If a tank-specific alarm (`T1_ALRM`) is active, it sets a local stop flag (`T1_STP`), which contributes to the "busy" status.
+
+@inputs
+- `HILVL1`, `LOLVL1`: The debounced status of the high and low-level switches for the Fresh Water Tank.
+- `A3_STRT`, `B3_STRT`, `C3_STRT`: Flags indicating that one of the CIP lines is in its final rinse stage (which uses fresh water). These are used to modify the "busy" logic.
+- `T1_ALRM`: An alarm flag specific to Tank 1.
+- `STOPALL`, `ENDALL`: Global stop/end commands.
+
+@outputs
+- `XVM001` (%M00001): The command to open the valve that fills the Fresh Water Tank.
+- `T1_BUSY` (%M00122): A boolean flag that is TRUE when the tank is unavailable for use (either due to a low level or an alarm). This is a critical interlock for all CIP processes.
+- `T1_FLNG` (%M00192): A status flag indicating that the tank is currently in the process of being filled.
+- `T1_STP` (%M00180): A local stop flag for the tank, activated by an alarm.
+
+@notes
+- This code is for a GE/Emerson RX3i PLC and is written in Structured Text (ST).
+- This is a standard and essential piece of control logic for managing a shared resource (the water tank) in a multi-process automation system. The `T1_BUSY` interlock is vital for preventing process failures.
+*)
+VAR_GLOBAL
+	#ALW_ON AT %S00007 : BOOL; (* Always ON *)
+	A3_STRT AT %M00134 : BOOL; (* CIP A Stage 3 started *)
+	B3_STRT AT %M00148 : BOOL; (* CIP B Stage 3 started *)
+	C3_STRT AT %M00159 : BOOL; (* CIP C Stage 3 started *)
+	ENDALL AT %M00105 : BOOL; (* End all processes *)
+	HILVL1 AT %M00114 : BOOL; (* High level Water *)
+	LOLVL1 AT %M00115 : BOOL; (* Low level Water *)
+	STOPALL AT %M00104 : BOOL; (* Stop all processes *)
+	T1_ALRM AT %M00173 : BOOL; (* Tank 1 in alarm state *)
+	T1_BUSY AT %M00122 : BOOL; (* Water tank busy *)
+	T1_FLNG AT %M00192 : BOOL; (* Fresh water tank filling water *)
+	T1_STP AT %M00180 : BOOL; (* Tank 1 stopped *)
+	XVM001 AT %M00001 : BOOL; (* WATER TO FRESH WATER TANK *)
+END_VAR
+VAR
+	WTNK_OK AT %M00270 : BOOL;
+	WTR2TK1 AT %M00272 : BOOL;
+END_VAR
+
+(* Rung 1: Tank 1 stopped *)
+IF T1_ALRM THEN
+	T1_STP := TRUE;
+END_IF;
+
+(* Rung 2: Fresh water tank filling water *)
+T1_FLNG := NOT LOLVL1 OR NOT HILVL1 OR (#ALW_ON AND NOT A3_STRT AND NOT B3_STRT AND NOT C3_STRT AND AND HILVL1);
+
+(* Rung 3: Water tank busy *)
+T1_BUSY := (NOT LOLVL1 OR T1_STP) AND NOT A3_STRT AND NOT B3_STRT AND NOT C3_STRT;
+
+(* Rung 4 *)
+WTR2TK1 := (NOT STOPALL) AND (NOT ENDALL) AND (NOT T1_STP) AND T1_FLNG;
+
+(* Rung 5: WATER TO FRESH WATER TANK *)
+XVM001 := #ALW_ON AND WTR2TK1 AND (NOT WTNK_OK);

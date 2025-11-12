@@ -1,0 +1,171 @@
+(*!
+@purpose
+This program (`_Main.txt`) serves as the main entry point and master execution controller for the entire CIP (Cleaning-In-Place) PLC logic. It is responsible for orchestrating the execution of all other programs and function blocks in a specific, deterministic order during each PLC scan cycle.
+
+Its primary responsibilities include:
+1.  **Initialization:** On the first scan (`#FST_SCN`), it calls the `INIT` subroutine to set the system to a known default state.
+2.  **Clock Pulse Generation:** It generates global 1-second (`SEC_PLS`) and 1-minute (`MIN_PLS`) clock pulses, which are used for timing functions throughout the codebase.
+3.  **HMI Command Handling:** It resets momentary push-button flags from the SCADA/HMI system (e.g., `PB_Start_CIP`, `PB_Stop_CIP`) to ensure they are treated as single-shot commands.
+4.  **EGD Communication Keep-Alive:** It manages a "heartbeat" or "live bit" exchange with other PLCs (PLC2 and PLC4) to monitor communication status.
+5.  **Subroutine Execution:** It calls all the main logic programs for CIP lines (A, B, C, D, E), barrel management, alarms, communication, and other system functions in the correct sequence.
+
+@inputs
+- `#FST_SCN`: A system flag that is TRUE only on the first scan after a cold start, used to trigger the `INIT` subroutine.
+- `#T_SEC`, `#T_MIN`: System clock bits used to generate the global second and minute pulses.
+- `Conc_Bool_From_PLC2[0]`, `Conc_Bool_From_PLC4[0]`: The "live bits" received from PLC2 and PLC4 via EGD communication.
+- `PB_Start_CIP`, `PB_Stop_CIP`, `PB_Start_SIP`, `PB_Stop_SIP`: Momentary boolean flags triggered by operator actions on the HMI.
+- `PB3091`: A physical "START" button for CIP Line C.
+- `STR_SCR`: A flag indicating a start command from the touch screen.
+
+@outputs
+- `Prod_Bool_To_PLC2[0]`, `Prod_Bool_To_PLC4[0]`: The "live bits" sent to PLC2 and PLC4 to confirm this PLC is running.
+- `SEC_PLS`, `MIN_PLS`: One-shot global clock pulse flags that are TRUE for a single scan every second and minute, respectively.
+- `C_ALARM`: A flag to reset the CIP C alarm state.
+- It calls numerous subroutines which in turn modify a wide range of global variables.
+
+@notes
+- This code is for a GE/Emerson RX3i PLC and is written in Structured Text (ST).
+- The order of subroutine calls in this file is critical as it defines the overall data flow and execution priority of the entire automation process.
+- The use of rising-edge detection (`AND NOT _RungX_Edge_Detector`) on the system clock bits ensures that `SEC_PLS` and `MIN_PLS` are true for only one scan.
+*)
+VAR_GLOBAL
+	"#ALW_OFF" AT %S00008 : BOOL; (* Always OFF *)
+	"#ALW_ON" AT %S00007 : BOOL; (* Always ON *)
+	"#FST_SCN" AT %S00001 : BOOL; (* Set to 1 when the current sweep is the first sweep. *)
+	"#T_MIN" AT %S00006 : BOOL; (* 1.0 minute timer contact. *)
+	"#T_SEC" AT %S00005 : BOOL; (* 1.0 second timer contact *)
+	C_ALARM AT %M00172 : BOOL; (* CIP C in alarm state. *)
+	Conc_Bool_From_PLC2 : ARRAY[0..16] OF BOOL;
+	Conc_Bool_From_PLC4 : ARRAY[0..16] OF BOOL;
+	M01125 AT %M01125 : BOOL;
+	M02050 AT %M02050 : BOOL; (* CIP Soda Tank2 Canceled *)
+	MIN_PLS AT %G00002 : BOOL;
+	PB3091 AT %I00091 : BOOL; (* "START" BUTTON CIP "C" FOR BARR *)
+	PB_Start_CIP AT %M01121 : BOOL; (* HMI Start CIP *)
+	PB_Start_SIP AT %M01123 : BOOL; (* HMI Start SIP *)
+	PB_Stop_CIP AT %M01122 : BOOL; (* HMI Stop CIP *)
+	PB_Stop_SIP AT %M01124 : BOOL; (* HMI Stop SIP *)
+	Prod_Bool_To_PLC2 : ARRAY[0..16] OF BOOL;
+	Prod_Bool_To_PLC4 : ARRAY[0..16] OF BOOL;
+	SEC_PLS AT %G00001 : BOOL;
+	STR_SCR AT %G00227 : BOOL; (* START FRM T.SCREEN *)
+	T00096 AT %T00096 : BOOL;
+	_Rung8_Edge_Detector : BOOL; (* Helper for Rung 8 positive transition *)
+	_Rung9_Edge_Detector : BOOL; (* Helper for Rung 9 positive transition *)
+END_VAR
+
+(* Rung 1: Live Bit PLC2 *)
+
+(* Rung 2: Live Bit PLC2 *)
+Prod_Bool_To_PLC2[0] := NOT Conc_Bool_From_PLC2[0];
+
+(* Rung 3: Live Bit PLC4 *)
+
+(* Rung 4: Live Bit PLC4 *)
+Prod_Bool_To_PLC4[0] := NOT Conc_Bool_From_PLC4[0];
+
+(* Rung 5 *)
+
+(* Rung 6: CIP Soda Tank2 Canceled *)
+M02050 := FALSE;
+
+(* Rung 7: CIP Soda Tank2 Canceled *)
+IF M02050 THEN
+	M02050 := TRUE;
+END_IF;
+
+(* Rung 8 *)
+SEC_PLS := (#ALW_ON AND #T_SEC) AND NOT _Rung8_Edge_Detector;
+_Rung8_Edge_Detector := #ALW_ON AND #T_SEC;
+
+(* Rung 9 *)
+MIN_PLS := (#ALW_ON AND #T_MIN) AND NOT _Rung9_Edge_Detector;
+_Rung9_Edge_Detector := #ALW_ON AND #T_MIN;
+
+(* Rung 10: CIP C in alarm state. *)
+IF PB3091 OR STR_SCR OR PB_Start_CIP THEN
+	C_ALARM := FALSE;
+END_IF;
+
+(* Rung 11 *)
+IF #FST_SCN THEN
+	INIT();
+END_IF;
+
+(* Rung 12 *)
+D_CIP();
+
+(* Rung 13 *)
+E_1_CIP();
+
+(* Rung 14 *)
+FQC();
+
+(* Rung 15 *)
+DO_TNK();
+
+(* Rung 16 *)
+CIP_A();
+
+(* Rung 17 *)
+CIP_B();
+
+(* Rung 18 *)
+CIP_C();
+
+(* Rung 19 *)
+BRL_CMD();
+
+(* Rung 20 *)
+BARRELS();
+
+(* Rung 21 *)
+MMI0CMD();
+
+(* Rung 22 *)
+HANDS();
+
+(* Rung 23 *)
+ALARMS();
+
+(* Rung 24 *)
+PLC2MMI();
+
+(* Rung 25 *)
+STERLS();
+
+(* Rung 26 *)
+WATER();
+
+(* Rung 27 *)
+WASHING();
+
+(* Rung 28 *)
+T00096 := #ALW_ON AND #ALW_OFF;
+
+(* Rung 29: HMI PB RST *)
+
+(* Rung 30: HMI Start CIP *)
+IF PB_Start_CIP THEN
+	PB_Start_CIP := FALSE;
+END_IF;
+
+(* Rung 31: HMI Stop CIP *)
+IF PB_Stop_CIP THEN
+	PB_Stop_CIP := FALSE;
+END_IF;
+
+(* Rung 32: HMI Start SIP *)
+IF PB_Start_SIP THEN
+	PB_Start_SIP := FALSE;
+END_IF;
+
+(* Rung 33: HMI Stop SIP *)
+IF PB_Stop_SIP THEN
+	PB_Stop_SIP := FALSE;
+END_IF;
+
+(* Rung 34 *)
+IF M01125 THEN
+	M01125 := FALSE;
+END_IF;

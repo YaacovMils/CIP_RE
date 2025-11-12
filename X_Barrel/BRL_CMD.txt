@@ -1,0 +1,213 @@
+(*!
+@purpose
+This program (`BRL_CMD.txt`) serves as the command and control interface for the barrel CIP (Cleaning-In-Place) process. It is responsible for initiating and terminating the cleaning sequence based on operator input, managing the queue of barrels to be cleaned, and logging the process data upon completion.
+
+Its primary functions are:
+1.  **Start/Stop Logic:** It handles the logic for starting the barrel CIP sequence (`BR_WORK`) from various sources, including physical pushbuttons (`PB3091`) and HMI/SCADA screen buttons (`STR_SCR`, `PB_Start_CIP`). It also manages the stop conditions, including operator stop commands, alarms, and normal sequence completion.
+2.  **Barrel Configuration Management:** It identifies which barrels (1, 2, or 3) are configured for the cleaning sequence by checking the `CIP_BRL*_No` registers.
+3.  **Data Logging and Reset:** When a cleaning sequence finishes (indicated by `En_CIP_SEQ`), it captures the total consumed volumes for each phase (pre-rinse, soda, final rinse) from the flow counter (`FQCCQTY`) and stores them in dedicated registers (`CIP_Q_FR`, `CIP_Q_SODA`, `CIP_Q_LR`), presumably for SQL logging or reporting. After a brief delay, it resets all logging variables and configuration flags to prepare for the next run.
+4.  **Sequential Post-Processing:** It uses a simple timed sequence (`TMR1_CIP`) to handle the post-CIP data for multiple barrels in an orderly fashion.
+
+@inputs
+- `PB3091`, `STR_SCR`, `PB_Start_CIP`: Start commands from physical buttons or HMI screens.
+- `PB3092`, `STP_SCR`, `PB_Stop_CIP`: Stop commands from physical buttons or HMI screens.
+- `CIP_BRL1_No`, `CIP_BRL2_No`, `CIP_BRL3_No`: Registers where the ID number of each barrel to be cleaned is configured.
+- `En_CIP_SEQ`: A flag from the `BARRELS.txt` program indicating that a full barrel sequence has been completed.
+- `FQCCQTY`: The live totalized flow volume from the CIP C line.
+- `BRL_ALR`: An alarm flag from the barrel process.
+- `SEC_PLS`: A 1-second clock pulse for driving the internal timer.
+
+@outputs
+- `BR_WORK` (%M00184): The master "run" signal for the barrel CIP process controlled in `BARRELS.txt`.
+- `BR_END` (%M00188): The master "end" signal to reset the barrel CIP process.
+- `CIP_Tank_No`, `CIP_Q_FR`, `CIP_Q_SODA`, `CIP_Q_LR`: Registers that hold the final data (barrel ID and consumed volumes) for logging purposes.
+- `CFG_BRL1`, `CFG_BRL2`, `CFG_BRL3`: Flags that become active when a valid barrel number is entered into the configuration registers.
+
+@notes
+- This code is for a GE/Emerson RX3i PLC and is written in Structured Text (ST).
+- This program acts as the high-level "supervisor" for the `BARRELS.txt` program, managing the "who" (which barrels) and "when" (start/stop), while `BARRELS.txt` manages the "how" (the actual cleaning sequence).
+*)
+VAR_GLOBAL
+    (* Local Variables from XML *)
+    CNF_BR2 AT %G00222 : BOOL; (* [No description provided] *)
+    STP_SCR AT %G00228 : BOOL; (* STOP FROM T.SCREEN *)
+    STR_SCR AT %G00227 : BOOL; (* START FROM T.SCREEN *)
+	_Bit AT %T00002 : BOOL; (* temporary bit *)
+
+    (* Global Variables from XML *)
+    ALW_OFF AT %S00008 : BOOL; (* Always OFF *)
+    BR_END AT %M00188 : BOOL; (* Barrel end CIP *)
+    BR_ST1 AT %M00185 : BOOL; (* Barrel stage 1 *)
+    BR_ST2 AT %M00186 : BOOL; (* Barrel stage 2 *)
+    BR_ST3 AT %M00187 : BOOL; (* Barrel stage 3 *)
+    BR_WORK AT %M00184 : BOOL; (* Barrel CIP in process *)
+    BRL_ALR AT %M00176 : BOOL; (* Barrel in alarm state. *)
+    CFG_BRL1 AT %G00121 : BOOL; (* CFG CIP BARREL No1 *)
+    CFG_BRL2 AT %G00122 : BOOL; (* CFG CIP BARREL No2 *)
+    CFG_BRL3 AT %G00123 : BOOL; (* CFG CIP BARREL No3 *)
+    CIP_BRL1_End AT %M01102 : BOOL; (* [No description provided] *)
+    CIP_BRL1_No AT %R00073 : INT; (* CIP_SIP_LOG.INT[3] *)
+    CIP_BRL2_End AT %M01103 : BOOL; (* [No description provided] *)
+    CIP_BRL2_No AT %R00074 : INT; (* [No description provided] *)
+    CIP_BRL3_No AT %R00075 : INT; (* [No description provided] *)
+    CIP_End AT %M01100 : BOOL; (* CIP_SIP_LOG.Bits[0] *)
+    CIP_Q_FR AT %R00050 : REAL; (* CIP_SIP_LOG.REAL[1] *)
+    CIP_Q_LR AT %R00052 : REAL; (* CIP_SIP_LOG.REAL[2] *)
+    CIP_Q_SODA AT %R00054 : REAL; (* CIP_SIP_LOG.REAL[3] *)
+    CIP_Tank_No AT %R00070 : INT; (* CIP_SIP_LOG.INT[0] *)
+    ELI AT %G00100 : BOOL; (* TO REMOVE SQL *)
+    En_CIP_SEQ AT %M01109 : BOOL; (* [No description provided] *)
+    FQCCQTY AT %R09015 : INT; (* FQC C quantity (+genius send) *)
+    M00285 AT %M00285 : BOOL; (* [No description provided] *)
+    M01105 AT %M01105 : BOOL; (* CIP Running *)
+    PB3091 AT %I00091 : BOOL; (* "START" BUTTON CIP "C" FOR BARR *)
+    PB3092 AT %I00092 : BOOL; (* "STOP" BUTTON CIP "C" FOR BARRE *)
+    PB_Start_CIP AT %M01121 : BOOL; (* HMI Start CIP *)
+    PB_Stop_CIP AT %M01122 : BOOL; (* HMI Stop CIP *)
+    SEC_PLS AT %G00001 : BOOL; (* [No description provided] *)
+    TMR1_CIP AT %R00090 : INT; (* CIP_SIP_LOG.INT[20] *)
+END_VAR
+
+(* Rung 1: Config CIP Barrel Num *)
+
+(* Rung 2: CFG CIP BARREL No1 *)
+IF BR_WORK THEN
+    CIP_BRL1_No := CIP_BRL1_No; (* MOVE_INT self-copy as per description *)
+    IF CIP_BRL1_No > 0 THEN
+        CFG_BRL1 := TRUE;
+    END_IF;
+END_IF;
+
+(* Rung 3: CFG CIP BARREL No2 *)
+IF BR_WORK THEN
+    CIP_BRL2_No := CIP_BRL2_No; (* MOVE_INT self-copy as per description *)
+    IF CIP_BRL2_No > 0 THEN
+        CFG_BRL2 := TRUE;
+    END_IF;
+END_IF;
+
+
+(* Rung 4: CFG CIP BARREL No3 *)
+IF BR_WORK THEN
+    CIP_BRL3_No := CIP_BRL3_No; (* MOVE_INT self-copy as per description *)
+    IF CIP_BRL3_No > 0 THEN
+        CFG_BRL3 := TRUE;
+    END_IF;
+END_IF;
+
+
+(* Rung 5: COMMENT1 *)
+
+(* Rung 6: CIP Running *)
+M01105 := BR_WORK;
+
+(* Rung 7: CIP_SIP_LOG.Bits[0] *)
+CIP_End := En_CIP_SEQ AND (CIP_BRL1_End OR CIP_BRL2_End);
+
+(* Rung 8: Barrel 1 config *)
+
+(* Rung 9: CIP_SIP_LOG.INT[0] *)
+IF CIP_BRL1_End THEN
+    CIP_Tank_No := CIP_BRL1_No;
+END_IF;
+
+(* Rung 10: Barrel 2 config *)
+
+(* Rung 11: CIP_SIP_LOG.INT[0] *)
+IF CIP_BRL2_End THEN
+    CIP_Tank_No := CIP_BRL2_No;
+END_IF;
+
+(* Rung 12: Q_FR,Soda,LR TO SQL *)
+
+(* Rung 13: CIP_SIP_LOG.REAL[1] *)
+IF BR_ST1 THEN
+    CIP_Q_FR := INT_TO_REAL(FQCCQTY);
+END_IF;
+
+(* Rung 14: CIP_SIP_LOG.REAL[3] *)
+IF BR_ST2 THEN
+    CIP_Q_SODA := INT_TO_REAL(FQCCQTY);
+END_IF;
+
+(* Rung 15: CIP_SIP_LOG.REAL[2] *)
+IF BR_ST3 THEN
+    CIP_Q_LR := INT_TO_REAL(FQCCQTY);
+END_IF;
+
+(* Rung 16: COMMENT5 *)
+
+(* Rung 17*)
+IF En_CIP_SEQ AND SEC_PLS THEN
+    TMR1_CIP := TMR1_CIP + 1;
+END_IF;
+_Bit := (TMR1_CIP > 13);
+
+
+(* Rung 18 *)
+IF _Bit THEN
+    CIP_BRL1_No := 0;
+    CIP_BRL2_No := 0;
+    CIP_BRL3_No := 0;
+    
+    CIP_Q_FR := 0.0;
+    CIP_Q_LR := 0.0;
+    CIP_Q_SODA := 0.0;
+    
+    TMR1_CIP := 0;
+
+    En_CIP_SEQ := FALSE;
+    CFG_BRL1 := FALSE;
+    CFG_BRL2 := FALSE;
+    CFG_BRL3 := FALSE;
+END_IF;
+
+(* Rung 19: barrel No1 CIP *)
+
+(* Rung 20: barrel No1 CIP *)
+
+CIP_BRL1_End := FALSE
+IF CFG_BRL1 AND (TMR1_CIP >= 1 AND TMR1_CIP <= 4) THEN
+    CIP_Tank_No := CIP_BRL1_No;
+	CIP_BRL1_End := CFG_BRL1 AND (TMR1_CIP >= 2 AND TMR1_CIP <= 4);
+END_IF;
+
+
+(* Rung 21: barrel No2 CIP *)
+
+(* Rung 22: barrel No2 CIP *)
+CIP_BRL2_End := FALSE
+IF CFG_BRL2 AND (TMR1_CIP >= 7 AND TMR1_CIP <= 11) THEN
+    CIP_Tank_No := CIP_BRL2_No;
+	CIP_BRL2_End := CFG_BRL2 AND (TMR1_CIP >= 8 AND TMR1_CIP <= 11);
+END_IF;
+
+
+(* Rung 23: Start Barrel CIP *)
+
+(* Rung 24: Barrel CIP in process *)
+_Bit := (PB3091 OR STR_SCR OR PB_Start_CIP)
+		 AND NOT PB3092 AND NOT M00285 AND NOT PB_Stop_CIP AND NOT STP_SCR;
+
+IF _Bit AND ((CFG_BRL1 AND CFG_BRL2)
+			OR (CFG_BRL3 AND #ALW_OFF)
+			OR (NOT ELI)) THEN
+	BR_WORK := TRUE;
+	BR_END := FALSE;
+	BRL_ALR := FALSE;
+END_IF;
+    
+(* Rung 25: Barrel end CIP *)
+
+IF (PB3092 OR STP_SCR OR M00285 OR PB_Stop_CIP;) 
+    AND (NOT PB3091 AND NOT STR_SCR AND NOT PB_Start_CIP) THEN
+    BR_END := TRUE;
+    BR_WORK := FALSE;
+END_IF;
+
+(* Rung 26: COMMENT1 *)
+
+(* Rung 27: Barrel end CIP *)
+IF BRL_ALR THEN
+    BR_END := TRUE;
+END_IF;

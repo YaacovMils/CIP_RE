@@ -1,0 +1,33 @@
+(*!
+@purpose
+This program (`INIT.txt`) serves as the initialization routine for the entire PLC application. It is called only once on the first scan of the PLC after it powers up or transitions from STOP to RUN mode. Its purpose is to set critical system parameters to known, default values, ensuring the system starts in a predictable and safe state.
+
+This routine is responsible for establishing the default time delays for device fault monitoring.
+
+@inputs
+- This program is typically called based on the `#FST_SCN` (First Scan) system bit, so it has no direct data inputs.
+
+@outputs
+- `PMPAPRD` (%R00004) (INT): Sets the default Pump Alarm Period to 300 (likely tenths of a second, for 30.0 seconds).
+- `VLVAPRD` (%R00003) (INT): Sets the default Valve Alarm Period to 100 (likely tenths of a second, for 10.0 seconds).
+
+@notes
+- This code is for a GE/Emerson RX3i PLC and is written in Structured Text (ST).
+- Using an initialization routine is a fundamental best practice in PLC programming. It prevents undefined or leftover values from being used in critical parameters, which could otherwise lead to unpredictable behavior on startup.
+- The values set here are hard-coded defaults. They may be adjustable by an operator on an HMI, but this routine ensures they always revert to these baseline values on a system reset.
+*)
+VAR_GLOBAL
+	#ALW_OFF AT %S00008 : BOOL; (* Always OFF *)
+	#ANY_FLT AT %SC0009 : BOOL; (* Set when any fault occurs *)
+	PMPAPRD AT %R00004 : INT; (* Pump alarm time period. *)
+	VLVAPRD AT %R00003 : INT; (* Valve alarm time period. *)
+END_VAR
+
+(* Rung 1: Pump alarm time period. *)
+PMPAPRD := 300;
+VLVAPRD := 100;
+
+(* Rung 2: Set when any fault occurs *)
+IF #ALW_OFF THEN
+    #ANY_FLT := FALSE;
+END_IF;

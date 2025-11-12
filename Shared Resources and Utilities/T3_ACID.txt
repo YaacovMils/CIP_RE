@@ -1,0 +1,174 @@
+(*!
+@purpose
+This program (`T3_ACID.txt`) contains the comprehensive control logic for the Acid Tank (Tank 3). It is responsible for managing the tank's level, temperature, and chemical concentration to ensure that a ready-to-use acid solution is always available for the CIP processes.
+
+The program operates as a state machine with three main states:
+1.  **Filling (`T3_FLNG`):** If the tank level is low, the program opens a water valve (`XVM014`) to refill it. This is interlocked to prevent filling while any CIP line is actively drawing acid.
+2.  **Circulating (`T3_CIRC`):** After filling, or after a set idle time, the program starts a circulation pump (`P4M67`). During circulation, it conditions the solution.
+3.  **Conditioning (during Circulation):** While circulating, the program monitors the solution's temperature and conductivity.
+    - If the temperature is not at setpoint, it opens a valve (`XVM041`) to a heat exchanger.
+    - If the conductivity (concentration) is not at setpoint, it opens a dosing valve (`XVM058`) to add more concentrated acid.
+The circulation and conditioning continue until both temperature and conductivity are within their required ranges, at which point the circulation stops and the tank is ready.
+
+@inputs
+- `HILVL3`, `LOLVL3`: The debounced status of the high and low-level switches.
+- `A2_STRT`, `B2_STRT`, `C2_STRT`, `D_Step6*`: Flags indicating that a CIP line is in an acid wash stage. These are used as interlocks.
+- `T_3_CLC`, `C_3_CLC`: The measured temperature and conductivity of the acid solution in the tank.
+- `COND_3`: An array containing the setpoints for conductivity and temperature.
+- `T3_ALR`, `STOPALL`, `ENDALL`: Alarm and global stop flags.
+
+@outputs
+- `XVM014`: Command to open the water fill valve.
+- `P4M67`, `XVM033`: Commands to start the circulation pump and open the circulation valve.
+- `XVM041`: Command to open a valve to a heat exchanger for temperature control.
+- `XVM058`: Command to open a valve for dosing concentrated acid to control conductivity.
+- `T3_BUSY` (%M00124): A critical interlock flag that is TRUE when the tank is filling, circulating, or in an alarm state, signaling to the CIP lines that it is unavailable for use.
+- `T3_STP`: A local stop flag for the tank.
+- `T3_CIRC`, `T3_FLNG`: Status flags for the current state of the tank.
+
+@notes
+- This code is for a GE/Emerson RX3i PLC and is written in Structured Text (ST).
+- The original comments are in Hebrew, confirming the function of the variables (e.g., "מיכל T3 סירקולציה" means "Tank T3 Circulation").
+- This program is a sophisticated example of batch conditioning logic, ensuring a critical process chemical is always prepared and within specification before it can be used.
+*)
+VAR_GLOBAL
+	A2_STRT AT %M00133 : BOOL; (* A2 - התחלת תהליך *)
+	B2_STRT AT %M00147 : BOOL; (* B2 - התחלת תהליך *)
+	C2_STRT AT %M00158 : BOOL; (* C2 - התחלת תהליך *)
+	C_3_CLC AT %R00120 : INT; (* T3 מוליכות מחושב *)
+	COND_3 AT %R00536 : ARRAY[0..55] OF INT;
+	D_Step61 AT %M00461 : BOOL;
+	D_Step62 AT %M00462 : BOOL;
+	D_Step63 AT %M00463 : BOOL;
+	D_Step64 AT %M00464 : BOOL;
+	D_Step68 AT %M00468 : BOOL;
+	D_Step69 AT %M00469 : BOOL;
+	ENDALL AT %M00105 : BOOL; (* סיום כל התהליכים *)
+	HILVL3 AT %M00118 : BOOL; (* מגע גבוה מים אסידי *)
+	LOLVL3 AT %M00119 : BOOL; (* מגע נמוך מים אסידי *)
+	M00206 AT %M00206 : BOOL;
+	M00256 AT %M00256 : BOOL;
+	P3085 AT %I00085 : BOOL;
+	P4M67 AT %M00067 : BOOL; (* משאבה P4 - סירקולציה מים אסידי *)
+	STOPALL AT %M00104 : BOOL; (* עצור את כל התהליכים *)
+	T3CRCTM AT %R00207 : INT;
+	T3CRSTM AT %R00213 : INT;
+	T3IDLTM AT %R00204 : INT;
+	T3MMIST AT %M00196 : BOOL; (* מיכל מים אסידי עצירה ממד *)
+	T3_ALR AT %M00174 : BOOL; (* מיכל T3 תקלה *)
+	T3_BUSY AT %M00124 : BOOL; (* מיכל מים אסידי עסוק *)
+	T3_CIRC AT %M00195 : BOOL; (* מיכל T3 סירקולציה *)
+	T3_FLNG AT %M00197 : BOOL; (* מיכל מים אסידי T3 - מלוי *)
+	T3_STP AT %M00181 : BOOL; (* מיכל T3 עצירה יזומה *)
+	T_3_CLC AT %R00116 : INT; (* T3 טמפרטורה מחושב *)
+	XVM014 AT %M00014 : BOOL; (* ברז 14 - מלוי מים אסידי *)
+	XVM033 AT %M00033 : BOOL; (* ברז 33 - סירקולציה מיכל אסידי *)
+	XVM041 AT %M00041 : BOOL; (* ברז 41 - מביפס קירור מים אסידי *)
+	XVM054 AT %M00054 : BOOL; (* ממיכל מים אסידי לשפכים *)
+	XVM058 AT %M00058 : BOOL; (* ברז 58 - מביפס מדידה מים אסידי *)
+	_Bit : BOOL;
+END_VAR
+
+VAR
+	IDLETMR : BOOL;
+	MINCRCT : BOOL;
+	CANMSR : BOOL;
+	COND_OK : BOOL;
+	TEMP_OK : BOOL;
+	CANSTOP : BOOL;
+	AUX1 : ARRAY[0..0] OF INT;
+	FB_T3IDLTM : CTU;
+	FB_T3CRCTM : TON;
+	FB_T3CRSTM : RTO;
+END_VAR
+
+(* Rung 1: מיכל T3 עצירה יזומה *)
+T3_STP := T3_ALR OR STOPALL OR T3MMIST OR ENDALL;
+
+(* Rung 2: מיכל מים אסידי T3 - מלוי *)
+T3_FLNG := ((NOT HILVL3) AND (NOT A2_STRT) AND (NOT B2_STRT) AND (NOT C2_STRT)
+			 OR (T3_FLNG AND (NOT HILVL3))
+			 OR (#ALW_ON AND (NOT LOLVL3)));
+			 AND (NOT D_Step61) AND (NOT D_Step62) AND (NOT D_Step63) AND (NOT D_Step64) AND (NOT D_Step68) AND (NOT D_Step69)
+
+(* Rung 3 *)
+FB_T3IDLTM(CU := (NOT T3_CIRC) AND #T_MIN, R := T3_CIRC, PV := 15);
+T3IDLTM := FB_T3IDLTM.CV;
+IDLETMR := FB_T3IDLTM.Q;
+
+(* Rung 4: מיכל T3 סירקולציה *)
+IF (((NOT T3_FLNG OR #ALW_ON) AND IDLETMR) 
+	 OR (HILVL3 AND NOT M00256))
+	AND (NOT D_Step61) AND (NOT D_Step62) AND (NOT D_Step63) AND (NOT D_Step64) AND (NOT D_Step68) AND (NOT D_Step69))	 THEN
+	T3_CIRC := TRUE;
+END_IF;
+
+(* Rung 5 *)
+IF HILVL3 AND #ALW_ON THEN
+	M00256 := TRUE;
+END_IF;
+
+(* Rung 6 *)
+IF (NOT HILVL3) AND #ALW_ON AND (NOT #ALW_OFF) THEN
+	M00256 := FALSE;
+END_IF;
+
+(* Rung 7 COMMENT0 *)
+
+(* Rung 8 *)
+FB_T3CRCTM(IN := T3_CIRC AND (NOT ENDALL) AND (NOT STOPALL) AND (NOT T3_STP), PT := T#60s);
+MINCRCT := FB_T3CRCTM.Q;
+T3CRCTM := WORD_TO_INT(TIME_TO_WORD(FB_T3CRCTM.ET) / 100);
+
+(* Rung 9 COMMENT1*)
+
+
+(* Rung 10 *)
+CANMSR := (T3_CIRC AND (NOT ENDALL) AND (NOT STOPALL) AND (NOT T3_STP)) AND (T3CRCTM >= 120);
+
+(* Rung 11 *)
+IF CANMSR THEN
+	AUX1[0] := COND_3[54] - 1;
+	COND_OK := C_3_CLC >= AUX1[0];
+ELSE
+	COND_OK := FALSE;
+END_IF;
+
+(* Rung 12 *)
+IF CANMSR THEN
+	AUX1[0] := COND_3[55];
+	TEMP_OK := T_3_CLC >= AUX1[0];
+ELSE
+	TEMP_OK := FALSE;
+END_IF;
+
+(* Rung 13 *)
+FB_T3CRSTM(IN := T3_CIRC AND MINCRCT AND COND_OK AND TEMP_OK, PT := T#1s);
+CANSTOP := FB_T3CRSTM.Q;
+T3CRSTM := WORD_TO_INT(TIME_TO_WORD(FB_T3CRSTM.ET) / 100);
+
+(* Rung 14  *)
+IF CANSTOP OR T3_FLNG THEN
+	T3_CIRC := FALSE;
+END_IF;
+
+(* Rung 15 COMMENT2 *)
+
+(* Rung 16 *)
+XVM014 := (NOT D_Step61) AND (NOT D_Step62) AND (NOT D_Step63) AND (NOT D_Step64) AND (NOT D_Step68) AND (NOT D_Step69) AND (NOT STOPALL) AND (NOT ENDALL) AND (NOT T3_STP) AND T3_FLNG;
+
+(* Rung 17: DEBUG: View current state *)
+(* _Bit := (NOT STOPALL) AND (NOT ENDALL) AND HILVL3 AND (NOT T3_STP) AND XVM054; *)
+
+(* Rung 18: הפעלת יציאות סירקולציה *)
+_Bit := T3_CIRC AND (NOT ENDALL) AND (NOT STOPALL) AND (NOT T3_FLNG) AND (NOT T3_STP);
+XVM033 := _Bit;
+P4M67  := _Bit;
+XVM041 := _Bit AND CANMSR AND (NOT TEMP_OK);
+XVM058 := _Bit AND CANMSR AND (NOT COND_OK) AND P3085;
+
+(* Rung 19 COMMENT3 *)
+
+
+(* Rung 20 *)
+T3_BUSY := (NOT T3_FLNG OR T3_CIRC OR T3_STP) AND NOT M00206 ;

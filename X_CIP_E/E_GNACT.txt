@@ -1,0 +1,277 @@
+(*!
+@purpose
+This program (`E_GNACT`) is responsible for activating the physical outputs (valves and pumps) for the Line E CIP sequence.
+It translates the active step flags (e.g., `E_Step1`, `E_Step21`) from the `E_STRCT` state machine into tangible hardware commands (`_Cmd`).
+
+A key function of this program is managing the return path of the cleaning solution. Based on conductivity readings (`CIT2110_Eu`), it decides whether to send the solution back to the appropriate tank (soda or acid), to a water recovery tank, or to the drain. This logic ensures chemicals are reclaimed when possible and water is recycled, optimizing resource usage.
+
+@inputs
+- `E_Step1` to `E_Step91` (BOOL): A series of boolean flags indicating the currently active step.
+- `CIP_Soda_R30_40`, `CIP_Acid_R30_40` (BOOL): Flags indicating the type of chemical wash selected.
+- `CIT2110_Eu` (%R09223) (REAL): Analog input representing the conductivity of the return solution.
+- `LSH3079`, `LSH3076` (BOOL): High-level switches for the Soda and Acid tanks.
+- `LSH3074_ON` (BOOL): A debounced flag indicating the water recovery tank is at a high level.
+- `LOLVL1`, `LOLVL2` (BOOL): Low-level flags for the fresh water and recovery water tanks.
+- `Rx_Hold_E_SEQ_R30` (%M01803) (BOOL): EGD signal to pause the main CIP pump.
+- `STOPALL` (%M00104) (BOOL): A global command to stop all processes.
+
+@outputs
+- `XV4208_Cmd` (%M01701) (BOOL): Command to open the valve for returning solution to the Water Recovery Tank.
+- `XV4206_Cmd` (%M01702) (BOOL): Command to open the valve for returning solution to the Acid Tank.
+- `XV4202_Cmd` (%M01703) (BOOL): Command to open the valve for returning solution to the Soda 1 Tank.
+- `XV4204_Cmd` (%M01704) (BOOL): Command to open the valve for returning solution to the Soda 2 Tank.
+- `XV4211_Cmd` (%M01705) (BOOL): Command to open the valve for returning solution to the Drain.
+- `XV4225_Cmd` (%M01706) (BOOL): Command to open the valve to supply CIP from the Water Recovery Tank.
+- `XV4236_Cmd` (%M01707) (BOOL): Command to open the valve to supply CIP from the Acid Tank.
+- `XV4234_Cmd` (%M01708) (BOOL): Command to open the valve to supply CIP from the Soda 1 Tank.
+- `XV4228_Cmd` (%M01709) (BOOL): Command to open the valve to supply CIP from the Soda 2 Tank.
+- `XV4231_Cmd` (%M01710) (BOOL): Command to open the valve to supply Fresh Water.
+- `XV4281_Cmd` (%M01711) (BOOL): Command to open the main valve from the CIP line to the Drain.
+- `P4269_Cmd` (%M01712) (BOOL): Command to start the main CIP E pump.
+
+@notes
+- This code is for a GE/Emerson RX3i PLC and is written in Structured Text (ST).
+- The logic for `HiConductivitySoda` and `HiConductivityAcid` uses a 2-second ON-delay timer (`TON`) to ensure the conductivity reading is stable before deciding to reclaim the chemical.
+- The program contains logic to switch to fresh water (`XV4231_Cmd`) if the recovery water tank is unavailable (`NOT LOLVL2`).
+- A 20-second delay (`Dly_P4269`) is implemented to ensure certain conditions are stable before starting the main pump (`P4269_Cmd`), preventing rapid cycling.
+*)
+VAR_GLOBAL
+	#ALW_OFF AT %S00008 : BOOL; (* Always OFF *)
+	BackToDarin AT %M01305 : BOOL;
+	BackToRecoveryTank AT %M01307 : BOOL;
+	BackToSodaTank AT %M01306 : BOOL;
+	CIP_Soda_R30_40 AT %M01352 : BOOL;
+	CIT2110_Eu AT %R09223 : REAL; (* 0-200mS *)
+	Dly_P4269 AT %R09204 : INT;
+	E_Step1 AT %M01401 : BOOL;
+	E_Step2 AT %M01402 : BOOL;
+	E_Step21 AT %M01421 : BOOL;
+	E_Step22 AT %M01422 : BOOL;
+	E_Step23 AT %M01423 : BOOL;
+	E_Step24 AT %M01424 : BOOL;
+	E_Step28 AT %M01428 : BOOL;
+	E_Step29 AT %M01429 : BOOL;
+	E_Step3 AT %M01403 : BOOL;
+	E_Step30 AT %M01430 : BOOL;
+	E_Step41 AT %M01441 : BOOL;
+	E_Step42 AT %M01442 : BOOL;
+	E_Step43 AT %M01443 : BOOL;
+	E_Step44 AT %M01444 : BOOL;
+	E_Step48 AT %M01448 : BOOL;
+	E_Step49 AT %M01449 : BOOL;
+	E_Step61 AT %M01461 : BOOL;
+	E_Step62 AT %M01462 : BOOL;
+	E_Step63 AT %M01463 : BOOL;
+	E_Step64 AT %M01464 : BOOL;
+	E_Step68 AT %M01468 : BOOL;
+	E_Step69 AT %M01469 : BOOL;
+	E_Step8 AT %M01408 : BOOL;
+	E_Step81 AT %M01481 : BOOL;
+	E_Step82 AT %M01482 : BOOL;
+	E_Step83 AT %M01483 : BOOL;
+	E_Step84 AT %M01484 : BOOL;
+	E_Step88 AT %M01488 : BOOL;
+	E_Step89 AT %M01489 : BOOL;
+	E_Step9 AT %M01409 : BOOL;
+	E_Step90 AT %M01490 : BOOL;
+	FQ207 AT %R09280 : INT;
+	FQ207_Real AT %R09270 : REAL;
+	HiConductivityAcid AT %M01304 : BOOL;
+	HiConductivitySoda AT %M01301 : BOOL;
+	LOLVL1 AT %M00115 : BOOL; (* Low level Water *)
+	LOLVL2 AT %M00117 : BOOL; (* Low level Rec water *)
+	LSH3074_ON AT %M00362 : BOOL; (* T2 High Level *)
+	LSH3076 AT %I00076 : BOOL; (* ASID TANK HIGH LEVEL *)
+	LSH3079 AT %I00079 : BOOL; (* SODA TANK 1 HIGH LEVEL *)
+	LSL3075 AT %I00075 : BOOL; (* WATER RECOVERY TANK LOW LEVEL *)
+	M00140 AT %M00140 : BOOL; (* T1_Repl_T2 *)
+	P4269_Cmd AT %M01712 : BOOL;
+	P4269_Cmd_Temp AT %M01303 : BOOL;	
+	Rx1_Cooker_Step_R30 AT %R09801 : WORD; (* Signal From Cooker *)
+	Rx_Hold_E_SEQ_R30 AT %M01803 : BOOL; (* Signal From Cooker *)
+	SEC_PLS AT %G00001 : BOOL;
+	STOPALL AT %M00104 : BOOL; (* Stop all processes *)
+	VolSP_E AT %R09281 : REAL; (* xxx Liters *)
+	XV4202_Cmd AT %M01703 : BOOL;
+	XV4204_Cmd AT %M01704 : BOOL;
+	XV4206_Cmd AT %M01702 : BOOL;
+	XV4208_Cmd AT %M01701 : BOOL;
+	XV4211_Cmd AT %M01705 : BOOL;
+	XV4225_Cmd AT %M01706 : BOOL;
+	XV4228_Cmd AT %M01709 : BOOL;
+	XV4231_Cmd AT %M01710 : BOOL;
+	XV4231_Mask AT %M01590 : BOOL;
+	XV4231_O AT %M01550 : BOOL;
+	XV4234_Cmd AT %M01708 : BOOL;
+	XV4236_Cmd AT %M01707 : BOOL;
+	XV4281_Cmd AT %M01711 : BOOL;
+	XV4281_Mask AT %M01591 : BOOL;
+	XV4281_O AT %M01551 : BOOL;
+END_VAR
+
+VAR
+	R09418 AT %R09418 : ARRAY [0..3] OF WORD;
+	R09418 : TON;
+	R09421 AT %R09421 : ARRAY [0..3] OF WORD;
+	R09421 : TON;
+	_Bit : BOOL;
+END_VAR
+
+(* Rung 1: BackToRecoveryTank open XV4208 *)
+
+(* Rung 2: BackToRecoveryTank *)
+BackToRecoveryTank := ((NOT HiConductivitySoda)OR (HiConductivitySoda AND LSH3079))
+					  AND NOT LSH3074_ON;
+
+(* Rung 3: BackToSodaTank Open XV4202 *)
+
+(* Rung 4: BackToSodaTank *)
+BackToSodaTank := HiConductivitySoda AND NOT LSH3079;
+
+(* Rung 5: BackToDrain Open XV4211 *)
+
+(* Rung 6: BackToDarin *)
+BackToDarin := NOT BackToRecoveryTank AND NOT BackToSodaTank;
+
+(* Rung 7: XV4208 CIP_E Return To Water Recovery Tank *)
+
+(* Rung 8: XV4208_Cmd *)
+XV4208_Cmd := (E_Step81 OR E_Step82 OR E_Step83 OR E_Step84
+			   OR E_Step88 OR E_Step89 OR E_Step90)AND BackToRecoveryTank;
+
+(* Rung 9: XV4206 CIP_E Return To Acid Tank *)
+
+(* Rung 10: HiConductivityAcid *)
+R09418(IN := (CIT2110_Eu >= 3.0), PT := T#2S);
+HiConductivityAcid := R09418.Q;
+
+(* Rung 11: XV4206_Cmd *)
+XV4206_Cmd := (E_Step61 OR E_Step62 OR E_Step68 OR E_Step69 OR E_Step63 OR E_Step64)
+			  AND NOT LSH3076 AND HiConductivityAcid;
+
+(* Rung 12: XV4202 CIP_E Return To Soda1 Tank *)
+
+(* Rung 13: HiConductivitySoda *)
+R09421(IN := (CIT2110_Eu >= 3.0), PT := T#2S);
+HiConductivitySoda := R09421.Q;
+
+(* Rung 14: XV4202_Cmd *)
+XV4202_Cmd := ((E_Step22 OR E_Step23 OR E_Step24 OR E_Step28 OR E_Step29)
+			   OR ((E_Step81 OR E_Step82 OR E_Step83 OR E_Step84) AND CIP_Soda_R30_40))
+			   AND BackToSodaTank;
+
+(* Rung 15: XV4204 CIP_E Return To Soda2 Tank *)
+
+(* Rung 16: XV4204_Cmd *)
+XV4204_Cmd := E_Step28 OR E_Step29 OR E_Step42 OR E_Step43 OR E_Step44
+			  OR ((E_Step81 OR E_Step82 OR E_Step83 OR E_Step84) AND CIP_Soda_R30_40);
+
+(* Rung 17: XV4211 CIP_E Return To Drain *)
+
+(* Rung 18: XV4211_Cmd *)
+XV4211_Cmd := E_Step1
+	OR E_Step2
+	OR E_Step3
+	OR E_Step8
+	OR E_Step9
+	OR E_Step21
+	OR ((E_Step22 OR E_Step23 OR E_Step24) AND NOT BackToSodaTank)
+	OR E_Step48
+	OR E_Step49
+	OR ((E_Step61 OR E_Step62 OR E_Step63 OR E_Step64) AND (NOT HiConductivityAci OR LSH3076)
+	OR ((E_Step81 OR E_Step82 OR E_Step84 OR E_Step88 OR E_Step89 OR E_Step90) AND BackToDarin);
+
+(* Rung 19: XV4225 CIP_E From Water Recovery Tank *)
+
+(* Rung 20: XV4225_Cmd *)
+XV4225_Cmd := ((E_Step1 OR ((E_Step2 OR E_Step3 OR E_Step8 OR E_Step9) AND #ALW_OFF)))
+			  AND LOLVL2;
+
+(* Rung 21: XV4236 CIP_E From Acid Tank *)
+
+(* Rung 22: XV4236_Cmd *)
+XV4236_Cmd := E_Step61 OR E_Step68 OR E_Step69;
+
+(* Rung 23: XV4234 CIP_E From Soda1 Tank *)
+
+(* Rung 24: XV4234_Cmd *)
+_Bit := E_Step30 AND (Rx1_Cooker_Step_R30= 4);
+
+(* Rung 25:*)
+XV4234_Cmd := E_Step21 OR E_Step28 OR E_Step29;
+
+(* Rung 26: XV4228 CIP_E From Soda2 Tank *)
+
+(* Rung 27: XV4228_Cmd *)
+XV4228_Cmd := E_Step23 OR E_Step24 OR E_Step28 OR E_Step29;
+
+(* Rung 28: XV4231 CIP_E Fresh Water *)
+
+(* Rung 29: XV4231_Cmd *)
+XV4231_Cmd := (E_Step81 OR E_Step83 OR E_Step84 OR E_Step88 OR E_Step89 OR M00140)
+			   AND LOLVL1;
+
+(* Rung 30: T1_Repl_T2 *)
+M00140 := (E_Step1 OR E_Step3 OR E_Step8 OR E_Step9 OR E_Step41 OR E_Step44 OR E_Step43
+		   OR E_Step48 OR E_Step49) AND NOT LOLVL2;
+
+(* Rung 31: XV4281 CIP_E To Drain *)
+
+(* Rung 32: XV4281_Cmd *)
+XV4281_Cmd := ((E_Step1 OR E_Step2 OR E_Step3 OR E_Step8 OR E_Step9) AND NOT M00140)
+	OR E_Step21
+	OR E_Step22
+	OR E_Step23
+	OR E_Step24
+	OR E_Step28
+	OR E_Step29
+	OR E_Step30
+	OR E_Step41
+	OR E_Step43
+	OR E_Step44
+	OR E_Step48
+	OR E_Step49
+	OR E_Step61
+	OR E_Step62
+	OR E_Step63
+	OR E_Step64
+	OR E_Step68
+	OR E_Step69
+	OR E_Step81
+	OR E_Step90;
+
+(* Rung 33: P4269_Start *)
+(* Rung 34 *)
+FQ207_Real := INT_TO_REAL(FQ207);
+
+(* Rung 35: P4269_Cmd_Temp *)
+(*
+	_Bit := (E_Step1 OR E_Step21 OR E_Step61)
+	_Bit1 := _Bit AND (XV4281_O OR XV4281_Mask);
+	_Bit2 := _Bit AND ((XV4231_O OR XV4231_Mask) AND NOT LSL3075);
+	_Bit3 := (E_Step81 OR E_Step82 OR E_Step83 OR E_Step84) AND (XV4231_O OR XV4231_Mask);
+	_Bit4 := _Bit OR _Bit1 OR _Bit2 OR _Bit3
+	P4269_Cmd_Temp := _Bit4 AND NOT Rx_Hold_E_SEQ_R30 AND NOT STOPALL AND (FQ207_Real < VolSP_E);
+*)
+P4269_Cmd_Temp := ((E_Step1 OR E_Step21 OR E_Step61)
+                   OR ((E_Step1 OR E_Step21 OR E_Step61) AND (XV4281_O OR XV4281_Mask))
+                   OR ((E_Step1 OR E_Step21 OR E_Step61) AND (XV4231_O OR XV4231_Mask) AND NOT LSL3075)
+                   OR ((E_Step81 OR E_Step82 OR E_Step83 OR E_Step84) AND (XV4231_O OR XV4231_Mask)))
+                   AND NOT Rx_Hold_E_SEQ_R30 AND NOT STOPALL AND (FQ207_Real < VolSP_E);
+
+
+(* Rung 36: Transitional output for delay counter *)
+_Bit := P4269_Cmd_Temp AND SEC_PLS AND (Dly_P4269 <= 20);
+
+(* Rung 37: Increment delay counter *)
+IF _Bit THEN
+	Dly_P4269 := Dly_P4269 + 1;
+END_IF;
+
+(* Rung 38: P4269_Cmd *)
+P4269_Cmd := P4269_Cmd_Temp AND (Dly_P4269 > 20);
+
+(* Rung 37: Reset delay counter *)
+IF NOT P4269_Cmd_Temp THEN
+	Dly_P4269 := 0;
+END_IF;

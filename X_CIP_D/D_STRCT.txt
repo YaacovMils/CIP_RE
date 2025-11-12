@@ -1,0 +1,539 @@
+(*!
+@purpose
+This program (`D_STRCT`) is the core state machine for the Cleaning-In-Place (CIP) process for Line D.
+It functions as a stepper, advancing through a sequence of steps defined by the `D_Steper` integer variable.
+The program manages the logic for four different types of CIP cycles selected via an HMI: Rinsing, Soda, Acid, or a full cycle (`All`).
+
+The state machine progresses based on various conditions, including time delays, volume measurements (from flowmeters),
+and physical sensor feedback (e.g., level switches). It also responds to commands from an external PLC (Cooker)
+via EGD communication, allowing for process holds, starts, and resets.
+
+@inputs
+- `CIP_Type_HMI` (%R09140) (INT): HMI input selecting the CIP cycle type.
+- `Rx_Start_CIP_D` (%M00804) (BOOL): EGD signal from the Cooker PLC to start the CIP sequence.
+- `Rx_Hold_D_SEQ` (%M00803) (BOOL): EGD signal from the Cooker PLC to pause the current sequence step.
+- `Rx_Reset_SEQ` (%M00809) (BOOL): EGD signal from the Cooker PLC to reset the stepper to step 0.
+- `RST_D` (%M00333) (BOOL): HMI button to reset the stepper to step 0.
+- `Abort_D` (%M00332) (BOOL): HMI button to abort the sequence.
+- `Rx_LSL1` (%M00801) (BOOL): EGD signal indicating a low level in the associated equipment.
+- `FS_106` (%M00553) (BOOL): Flow switch feedback.
+- `FIT107_Count` (%R09130) (INT): Water volume counter from flowmeter FIT107.
+- `SP_Fill_Vol` (%R09131) (INT): The preset volume for fill steps.
+- `MonitorTime` (%M00324) (BOOL): A boolean flag that becomes true when a step's timed duration has elapsed.
+- `SEC_PLS` (%G00001) (BOOL): A 1-second system clock pulse used for timing.
+
+@outputs
+- `D_Steper` (%R09101) (INT): The master register that holds the current step number of the Line D CIP sequence.
+- `CIP_Type_PLC` (%R00139) (INT): Internal register that latches the selected `CIP_Type_HMI`.
+- `CIP_Rinsing`, `CIP_Soda`, `CIP_Acid`, `CIP_All` (BOOL): Boolean flags indicating the active cleaning cycle type.
+- `N_Step_D` (%M00321) (BOOL): A one-shot flag that is TRUE for one scan when the stepper value changes.
+- `CIP_Ended` (%M00327) (BOOL): A flag set to TRUE when the entire CIP sequence completes successfully.
+- `Step_Jump` (%M00322) (BOOL): A control bit to ensure only one step transition occurs per PLC scan.
+
+@notes
+- This code is for a GE/Emerson RX3i PLC and is written in Structured Text (ST).
+- The logic is heavily dependent on the value of `D_Steper`. Each "Rung" or section of logic typically checks if a specific step is active (`IF D_StepXX THEN...`) and then evaluates conditions to transition to the next step.
+- The `Step_Jump` variable is critical. It is set to TRUE after a step transition and reset at the end of the program scan. This prevents the logic from cascading through multiple steps in a single scan cycle.
+- The function call `D_BITAL()` unpacks the integer `D_Steper` into individual boolean bits (e.g., `D_Step1`, `D_Step2`), which simplifies the step-based logic.
+- External interlocks from other PLCs (via EGD) and faults (`D_Farm_FLT`) can hold or stop the sequence.
+*)
+VAR_GLOBAL
+	#ALW_ON AT %S00007 : BOOL; (* Always ON *)
+	Abort_D AT %M00332 : BOOL; (* HMI Button Abort *)
+	CIP_Acid AT %M00353 : BOOL; (**)
+	CIP_All AT %M00354 : BOOL; (**)
+	CIP_D_FarmeCondition AT %M00320 : BOOL; (* CIP D Condition *)
+	CIP_Ended AT %M00327 : BOOL; (**)
+	CIP_Rinsing AT %M00351 : BOOL; (**)
+	CIP_Soda AT %M00352 : BOOL; (**)
+	CIP_Type_HMI AT %R09140 : INT;
+	CIP_Type_PLC AT %R00139 : INT; (**)
+	D_Farm_FLT AT %M00640 : BOOL; (* General Fault CIP D *)
+	D_His_Step AT %R09102 : INT;
+	D_Step0 AT %M00400 : BOOL; (**)
+	D_Step1 AT %M00401 : BOOL; (**)
+	D_Step100 AT %M00489 : BOOL; (* סיום שטיפה מלאה *)
+	D_Step2 AT %M00402 : BOOL; (**)
+	D_Step21 AT %M00421 : BOOL; (**)
+	D_Step22 AT %M00422 : BOOL; (* סודה ריקון *)
+	D_Step23 AT %M00423 : BOOL; (**)
+	D_Step24 AT %M00424 : BOOL; (**)
+	D_Step28 AT %M00428 : BOOL; (**)
+	D_Step29 AT %M00429 : BOOL; (**)
+	D_Step3 AT %M00403 : BOOL; (**)
+	D_Step30 AT %M00430 : BOOL; (**)
+	D_Step41 AT %M00441 : BOOL; (**)
+	D_Step42 AT %M00442 : BOOL; (**)
+	D_Step43 AT %M00443 : BOOL; (**)
+	D_Step44 AT %M00444 : BOOL; (**)
+	D_Step48 AT %M00448 : BOOL; (**)
+	D_Step49 AT %M00449 : BOOL; (* שטיפת ביניים פליטים *)
+	D_Step61 AT %M00461 : BOOL; (**)
+	D_Step62 AT %M00462 : BOOL; (**)
+	D_Step63 AT %M00463 : BOOL; (**)
+	D_Step64 AT %M00464 : BOOL; (**)
+	D_Step68 AT %M00468 : BOOL; (**)
+	D_Step69 AT %M00469 : BOOL; (**)
+	D_Step8 AT %M00408 : BOOL; (**)
+	D_Step81 AT %M00481 : BOOL; (**)
+	D_Step82 AT %M00482 : BOOL; (**)
+	D_Step83 AT %M00483 : BOOL; (**)
+	D_Step84 AT %M00484 : BOOL; (**)
+	D_Step88 AT %M00488 : BOOL; (**)
+	D_Step9 AT %M00409 : BOOL; (**)
+	D_Step90 AT %M00490 : BOOL; (**)
+	D_Steper AT %R09101 : INT; (*Struct *)
+	Elp_D AT %R09103 : INT; (* Sequence Elapsed time *)
+	FIT107_Count AT %R09130 : INT;
+	FIT107_Pre AT %R09132 : INT;
+	FS_106 AT %M00553 : BOOL; (* CIP_D Flow Switch *)
+	LSL1_1_8_Dly_Off AT %M00364 : BOOL; (* Off Dly *)
+	Monitor_Vol AT %M00325 : BOOL;
+	MonitorAct AT %R09104 : INT; (* Setp_Time_Actual Count *)
+	MonitorDwn AT %R09106 : INT; (* MonitoringCount Down *)
+	MonitorDwn_FQ AT %R09133 : INT;
+	MonitorPre AT %R09105 : INT; (* Monitoring Preset Time *)
+	MonitorTime AT %M00324 : BOOL; (* MonitoringTime_D *)
+	N_Step_D AT %M00321 : BOOL; (* New_Step_Line D *)
+	RST_D AT %M00333 : BOOL; (* HMI Button Reset Steper *)
+	Rx_CipNoFlood AT %M00811 : BOOL;
+	Rx_Cooker_Fault AT %M00805 : BOOL; (* Signal From Cooker *)
+	Rx_Cooker_Switch AT %M00807 : BOOL;
+	Rx_Hold_D_SEQ AT %M00803 : BOOL; (* Signal From Cooker *)
+	Rx_LSL1 AT %M00801 : BOOL; (* Signal From Cooker *)
+	Rx_R20_Steper AT %R09601 : INT; (* Signals R20 *)
+	Rx_Reset_SEQ AT %M00809 : BOOL; (* Sequance RESET *)
+	Rx_Start_CIP_D AT %M00804 : BOOL; (* Signal From Cooker *)
+	SEC_PLS AT %G00001 : BOOL;
+	SP_Fill_Vol AT %R09131 : INT; (* xxx Liters *)
+	Step_Jump AT %M00322 : BOOL; (**)
+	STOPALL AT %M00104 : BOOL; (* Stop all processes *)
+	T1_BUSY AT %M00122 : BOOL; (* Water tank busy *)
+	T3_BUSY AT %M00124 : BOOL; (* Acid tank busy *)
+	T4_BUSY AT %M00125 : BOOL; (* Soda 1 tank busy *)
+	T5_BUSY AT %M00126 : BOOL; (* Soda 2 tank busy *)
+END_VAR
+
+PROGRAM D_STRCT
+
+VAR
+	COND_OK AT %T00005 : BOOL; (* Conductivity OK *)
+	TEMP_OK AT %T00006 : BOOL; (* Temperature OK *)
+	R09358 : TON; (* Timer instance for Rung 1 *)
+	DlyOffCipEnd AT %R09343 : TON;
+	_Bit : Bool;
+END_VAR
+
+(* Rung 1:*)
+R09358(IN := Not Rx_LSL1, PT := T#30S);
+LSL1_1_8_Dly_Off := R09358.Q;
+
+(* Rung 2: COMMENT0 *)
+
+(* Rung 3:*)
+IF D_Step0 THEN
+	CIP_Type_PLC := CIP_Type_HMI;
+END_IF;
+
+(* Rung 4:*)
+CIP_Rinsing := (CIP_Type_PLC = 1);
+
+(* Rung 5:*)
+CIP_Soda := (CIP_Type_PLC = 2);
+
+(* Rung 6:*)
+CIP_Acid := (CIP_Type_PLC = 3);
+
+(* Rung 7:*)
+CIP_All := (CIP_Type_PLC = 4);
+
+(* Rung 8: COMMENT1 *)
+
+(* Rung 9, 10, 11: Stepper Sanity Checks *)
+_Bit := (D_Steper < 0);
+
+(* Rung 10: *)
+IF _Bit OR Rx_Reset_SEQ THEN
+	D_Steper := 0;
+END_IF;
+(* Rung 11: *)
+
+IF D_Steper > 90 THEN
+	D_Steper := 0;
+END_IF;
+
+(* Rung 12: COMMENT2 *)
+
+(* Rung 13:*)
+N_Step_D := (D_Steper <> D_His_Step);
+
+(* Rung 14: COMMENT3 *)
+
+(* Rung 15:Struct *)
+
+IF N_Step_D THEN
+	D_His_Step := D_Steper;
+END_IF;
+
+(* Rung 16: COMMENT4 *)
+
+(* Rung 17:*)
+IF NOT Rx_Hold_D_SEQ AND SEC_PLS AND (D_Steper > 0) THEN
+	Elp_D := Elp_D + 1;
+END_IF;
+
+(* Rung 18: COMMENT5 *)
+
+(* Rung 19  *)
+_Bit := Rx_Cooker_Switch AND NOT Rx_Hold_D_SEQ AND NOT Rx_Cooker_Fault AND NOT D_Farm_FLT AND NOT D_Step0
+		AND SEC_PLS AND (MonitorAct < MonitorPre);
+		
+(* Rung 20 *)		
+IF _Bit THEN
+	MonitorAct := MonitorAct + 1;
+END_IF;
+
+(* Rung 21 *)
+MonitorTime := (NOT D_Step0 AND NOT N_Step_D) AND (MonitorAct >= MonitorPre);
+
+(* Rung 22: COMMENT6 *)
+
+(* Rung 23: *)
+MonitorDwn := MonitorPre - MonitorAct;
+
+(* Rung 24: COMMENT7 *)
+
+(* Rung 25:*)
+Monitor_Vol := (D_Step1 OR D_Step21 OR D_Step28 OR D_Step41 OR D_Step61 OR D_Step81)
+				AND NOT N_Step_D AND NOT Rx_Hold_D_SEQ AND NOT Rx_Cooker_Fault AND NOT D_Farm_FLT
+				AND (FIT107_Count >= SP_Fill_Vol);
+
+(* Rung 26:*)
+MonitorDwn_FQ := FIT107_Pre - FIT107_Count;
+
+(* Rung 27: COMMENT8 *)
+
+(* Rung 28: HMI Button Reset Steper *)
+IF RST_D THEN
+	D_Steper := 0;
+END_IF;
+
+(* Rung 29: Sequence Elapsed time *)
+IF D_Step0 OR RST_D THEN
+	Elp_D := 0;
+END_IF;
+
+(* Rung 30: Reset timers/counters on new step or abort *)
+IF N_Step_D OR RST_D OR Abort_D OR D_Step0 THEN
+	MonitorAct := 0;
+	FIT107_Pre := 0;
+END_IF;
+
+(* Rung 31: COMMENT9 *)
+
+(* Rung 32: Call to bit assignment logic *)
+D_BITAL();
+
+(* Rung 33: COMMENT10 *)
+
+(* Rung 34: *)
+_Bit := (((NOT T3_BUSY AND COND_OK AND TEMP_OK)
+		   OR (#ALW_ON)
+		   OR (CIP_Soda))
+		 AND (NOT T4_BUSY OR NOT T5_BUSY OR CIP_Acid))
+		OR CIP_Rinsing;
+		
+(* Rung 35: *)		
+CIP_D_FarmeCondition := _Bit AND NOT T1_BUSY AND NOT D_Farm_FLT AND D_Step0 AND NOT STOPALL;
+
+(* Rung 36: COMMENT11 *)
+
+(* Rung 37: D_Step0 - Start Non-Rinsing *)
+IF D_Step0 AND NOT Step_Jump AND NOT Rx_Hold_D_SEQ AND CIP_D_FarmeCondition AND Rx_Start_CIP_D AND NOT CIP_Rinsing THEN
+    D_Steper := 1;
+    Step_Jump := TRUE;
+END_IF;
+
+(* Rung 38: D_Step0 - Start Rinsing *)
+IF D_Step0 AND NOT Step_Jump AND NOT Rx_Hold_D_SEQ AND CIP_D_FarmeCondition AND Rx_Start_CIP_D AND CIP_Rinsing THEN
+    D_Steper := 81;
+    Step_Jump := TRUE;
+END_IF;
+
+(* Rung 39: COMMENT12 *)
+
+(* Rung 40: D_Step1 *)
+IF D_Step1 AND NOT Step_Jump AND NOT Rx_Hold_D_SEQ AND (Monitor_Vol OR MonitorTime) THEN
+    D_Steper := 2;
+    Step_Jump := TRUE;
+END_IF;
+
+(* Rung 41: COMMENT13 *)
+
+(* Rung 42: D_Step2 *)
+IF D_Step2 AND NOT Step_Jump AND NOT Rx_Hold_D_SEQ AND LSL1_1_8_Dly_Off THEN
+    D_Steper := 3;
+    Step_Jump := TRUE;
+END_IF;
+
+(* Rung 43: COMMENT14 *)
+
+(* Rung 44: D_Step3 *)
+IF D_Step3 AND NOT Step_Jump AND NOT Rx_Hold_D_SEQ AND FS_106 THEN
+    D_Steper := 8;
+    Step_Jump := TRUE;
+END_IF;
+
+(* Rung 45: COMMENT15 *)
+
+(* Rung 46: D_Step8 *)
+IF D_Step8 AND NOT Step_Jump AND NOT Rx_Hold_D_SEQ AND MonitorTime THEN
+    D_Steper := 9;
+    Step_Jump := TRUE;
+END_IF;
+
+(* Rung 47: COMMENT16 *)
+
+(* Rung 48: D_Step9 - Branch to Soda *)
+IF (CIP_Soda AND CIP_All)AND D_Step9 AND NOT Step_Jump AND NOT Rx_Hold_D_SEQ AND MonitorTime  THEN
+    D_Steper := 21;
+    Step_Jump := TRUE;
+END_IF;
+
+(* Rung 49: D_Step9 - Branch to Acid *)
+IF CIP_Acid AND D_Step9 AND NOT Step_Jump AND NOT Rx_Hold_D_SEQ AND MonitorTime THEN
+    D_Steper := 61;
+    Step_Jump := TRUE;
+END_IF;
+
+(* Rung 50: COMMENT17 *)
+
+(* Rung 51: D_Step21 *)
+IF D_Step21 AND NOT Step_Jump AND NOT Rx_Hold_D_SEQ AND (Monitor_Vol OR MonitorTime) THEN
+    D_Steper := 22;
+    Step_Jump := TRUE;
+END_IF;
+
+(* Rung 52: COMMENT18 *)
+
+(* Rung 53: D_Step22 *)
+IF D_Step22 AND NOT Step_Jump AND NOT Rx_Hold_D_SEQ AND LSL1_1_8_Dly_Off THEN
+    D_Steper := 23;
+    Step_Jump := TRUE;
+END_IF;
+
+(* Rung 54: COMMENT19 *)
+
+(* Rung 55: D_Step23 *)
+IF D_Step23 AND NOT Step_Jump AND NOT Rx_Hold_D_SEQ AND FS_106 THEN
+    D_Steper := 24;
+    Step_Jump := TRUE;
+END_IF;
+
+(* Rung 56: COMMENT20 *)
+
+(* Rung 57: D_Step24 *)
+IF D_Step24 AND NOT Step_Jump AND NOT Rx_Hold_D_SEQ AND MonitorTime THEN
+    D_Steper := 28;
+    Step_Jump := TRUE;
+END_IF;
+
+(* Rung 58: COMMENT21 *)
+
+(* Rung 59: D_Step28 - With Flood Protection *)
+IF D_Step28 AND NOT Step_Jump AND NOT Rx_Hold_D_SEQ AND MonitorTime AND Rx_CipNoFlood THEN
+    D_Steper := 29;
+    Step_Jump := TRUE;
+END_IF;
+
+(* Rung 60: D_Step28 - Without Flood Protection *)
+IF D_Step28 AND NOT Step_Jump AND NOT Rx_Hold_D_SEQ AND NOT Rx_CipNoFlood THEN
+    D_Steper := 30;
+    Step_Jump := TRUE;
+END_IF;
+
+(* Rung 61: COMMENT22 *)
+
+(* Rung 62: D_Step30 - Loop back to 29 *)
+IF D_Step30 AND NOT Step_Jump AND NOT Rx_Hold_D_SEQ AND MonitorTime AND (Rx_R20_Steper = 3) THEN
+    D_Steper := 29;
+    Step_Jump := TRUE;
+END_IF;
+
+(* Rung 63: COMMENT23 *)
+
+(* Rung 64: D_Step29 - To Step 41 if All *)
+IF D_Step29 AND CIP_All AND NOT Step_Jump AND NOT Rx_Hold_D_SEQ AND MonitorTime THEN
+    D_Steper := 41;
+    Step_Jump := TRUE;
+END_IF;
+
+(* Rung 65: D_Step29 - To Step 81 if Soda *)
+IF D_Step29 AND CIP_Soda AND NOT Step_Jump AND NOT Rx_Hold_D_SEQ AND MonitorTime THEN
+    D_Steper := 81;
+    Step_Jump := TRUE;
+END_IF;
+
+(* Rung 66: COMMENT24 *)
+
+(* Rung 67: D_Step41 *)
+IF D_Step41 AND NOT Step_Jump AND NOT Rx_Hold_D_SEQ AND (Monitor_Vol OR MonitorTime) THEN
+    D_Steper := 42;
+    Step_Jump := TRUE;
+END_IF;
+
+(* Rung 68: COMMENT25 *)
+
+(* Rung 69: D_Step42 *)
+IF D_Step42 AND NOT Step_Jump AND NOT Rx_Hold_D_SEQ AND LSL1_1_8_Dly_Off THEN
+    D_Steper := 43;
+    Step_Jump := TRUE;
+END_IF;
+
+(* Rung 70: COMMENT26 *)
+
+(* Rung 71: D_Step43 *)
+IF D_Step43 AND NOT Step_Jump AND NOT Rx_Hold_D_SEQ AND FS_106 THEN
+    D_Steper := 44;
+    Step_Jump := TRUE;
+END_IF;
+
+(* Rung 72: COMMENT27 *)
+
+(* Rung 73: D_Step44 *)
+IF D_Step44 AND NOT Step_Jump AND NOT Rx_Hold_D_SEQ AND MonitorTime THEN
+    D_Steper := 48;
+    Step_Jump := TRUE;
+END_IF;
+
+(* Rung 74: COMMENT28 *)
+
+(* Rung 75: D_Step48 *)
+IF D_Step48 AND NOT Step_Jump AND NOT Rx_Hold_D_SEQ AND MonitorTime THEN
+    D_Steper := 49;
+    Step_Jump := TRUE;
+END_IF;
+
+(* Rung 76: COMMENT29 *)
+
+(* Rung 77: D_Step49 *)
+IF D_Step49 AND NOT Step_Jump AND NOT Rx_Hold_D_SEQ AND MonitorTime THEN
+    D_Steper := 61;
+    Step_Jump := TRUE;
+END_IF;
+
+(* Rung 78: COMMENT30 *)
+
+(* Rung 79: D_Step61 *)
+IF D_Step61 AND NOT Step_Jump AND NOT Rx_Hold_D_SEQ AND (Monitor_Vol OR MonitorTime) THEN
+    D_Steper := 62;
+    Step_Jump := TRUE;
+END_IF;
+
+(* Rung 80: COMMENT31 *)
+
+(* Rung 81: D_Step62 *)
+IF D_Step62 AND NOT Step_Jump AND NOT Rx_Hold_D_SEQ AND LSL1_1_8_Dly_Off THEN
+    D_Steper := 63;
+    Step_Jump := TRUE;
+END_IF;
+
+(* Rung 82: COMMENT32 *)
+
+(* Rung 83: D_Step63 *)
+IF D_Step63 AND NOT Step_Jump AND NOT Rx_Hold_D_SEQ AND FS_106 THEN
+    D_Steper := 64;
+    Step_Jump := TRUE;
+END_IF;
+
+(* Rung 84: COMMENT33 *)
+
+(* Rung 85: D_Step64 *)
+IF D_Step64 AND NOT Step_Jump AND NOT Rx_Hold_D_SEQ AND MonitorTime THEN
+    D_Steper := 68;
+    Step_Jump := TRUE;
+END_IF;
+
+(* Rung 86: COMMENT34 *)
+
+(* Rung 87: D_Step68 *)
+IF D_Step68 AND NOT Step_Jump AND NOT Rx_Hold_D_SEQ AND MonitorTime THEN
+    D_Steper := 69;
+    Step_Jump := TRUE;
+END_IF;
+
+(* Rung 88: Step81 שטיפה אחרונה מילוי *)
+
+(* Rung 89: D_Step69 *)
+IF D_Step69 AND NOT Step_Jump AND NOT Rx_Hold_D_SEQ AND MonitorTime THEN
+    D_Steper := 81;
+    Step_Jump := TRUE;
+END_IF;
+
+(* Rung 90: Step82 שטיפה אחרונה ריקון *)
+
+(* Rung 91: D_Step81 *)
+IF D_Step81 AND NOT Step_Jump AND NOT Rx_Hold_D_SEQ AND (Monitor_Vol OR MonitorTime) THEN
+    D_Steper := 82;
+    Step_Jump := TRUE;
+END_IF;
+
+(* Rung 92: COMMENT37 *)
+
+(* Rung 93: D_Step82 *)
+IF D_Step82 AND NOT Step_Jump AND NOT Rx_Hold_D_SEQ AND LSL1_1_8_Dly_Off THEN
+    D_Steper := 83;
+    Step_Jump := TRUE;
+END_IF;
+
+(* Rung 94: Step83 שטיפה אחרונה חזרה לחווה *)
+
+(* Rung 95: D_Step83 *)
+IF D_Step83 AND NOT Step_Jump AND NOT Rx_Hold_D_SEQ AND FS_106 THEN
+    D_Steper := 84;
+    Step_Jump := TRUE;
+END_IF;
+
+(* Rung 96: Step88 שטיפה אחרונה סיחרור *)
+
+(* Rung 97: D_Step84 *)
+IF D_Step84 AND NOT Step_Jump AND NOT Rx_Hold_D_SEQ AND MonitorTime THEN
+    D_Steper := 88;
+    Step_Jump := TRUE;
+END_IF;
+
+(* Rung 98: Step89 שטיפה אחרונה פליטים *)
+
+(* Rung 99: D_Step88 *)
+IF D_Step88 AND NOT Step_Jump AND NOT Rx_Hold_D_SEQ AND MonitorTime THEN
+    D_Steper := 89;
+    Step_Jump := TRUE;
+END_IF;
+
+(* Rung 100: COMMENT41 *)
+
+(* Rung 101: D_Step100 *)
+IF D_Step100 AND NOT Step_Jump AND NOT Rx_Hold_D_SEQ AND MonitorTime THEN
+    D_Steper := 90;
+    Step_Jump := TRUE;
+END_IF;
+
+(* Rung 102: COMMENT42 *)
+
+(* Rung 103: D_Step90 - Final Step *)
+IF D_Step90 AND NOT Step_Jump AND NOT Rx_Hold_D_SEQ AND MonitorTime THEN
+    D_Steper := 0;
+    Step_Jump := TRUE;
+    CIP_Ended := TRUE;
+END_IF;
+
+(* Rung 104: Reset Step_Jump *)
+IF Step_Jump THEN
+    Step_Jump := FALSE;
+END_IF;
+
+(* Rung 105: CIP_Ended Timer - 5 seconds delay *)
+DlyOffCipEnd(IN := CIP_Ended1, PT := T#5S);
+IF DlyOffCipEnd.Q THEN
+	CIP_Ended := FALSE;
+END_IF;

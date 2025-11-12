@@ -1,0 +1,342 @@
+(*!
+@purpose
+This program (`T45SODA.txt`) contains the comprehensive and sophisticated control logic for the dual Soda Tanks (Tank 4 and Tank 5). This is a highly critical and complex routine that manages which tank is active, ensures both are kept at the correct level, temperature, and concentration, and provides the necessary interlocks for the entire facility.
+
+The program's key functions are:
+1.  **Active Tank Management:** It uses the `T4ACTIV` flag to select which of the two tanks is the primary ("active") tank. All operations are directed to the active tank, allowing the other to be on standby or undergoing preparation.
+2.  **Automatic Filling:** It monitors the level of the active tank and automatically opens the correct water valve (`XVM012` or `XVM013`) to refill it when low. This is interlocked to prevent filling while a CIP line is drawing soda.
+3.  **Circulation and Conditioning:** After filling or after an idle period, it starts a circulation pump (`P4M68`). During circulation, it conditions the solution in the active tank:
+    - **Temperature Control:** It monitors the temperature and opens a steam valve (`XVM040`) if heating is required.
+    - **Conductivity (Concentration) Control:** It monitors conductivity. If the concentration is low, it starts a dosing pump (`P4057`) and opens a valve (`XVM018` or `XVM019`) to add 45% concentrated soda.
+4.  **Ready State Logic:** Circulation continues until both temperature and conductivity are within their specified ranges. Only a ready tank can be used by the CIP processes.
+5.  **Interlock Generation:** It generates the critical `T4_BUSY` and `T5_BUSY` signals. A tank is considered "busy" if it is filling, circulating, has an alarm, or is designated as the inactive tank. This ensures that the CIP lines can only draw from the one tank that is currently active and ready.
+
+@inputs
+- `T4ACTIV`: The master flag that selects Tank 4 (TRUE) or Tank 5 (FALSE) as the active tank.
+- `HILVL4`, `LOLVL4`, `HILVL5`, `LOLVL5`: Level switch feedback for both tanks.
+- `A2_STRT`, `B2_STRT`, `C2_STRT`, `D_Step2*`: Flags indicating a CIP line is in a soda wash stage, used for interlocks.
+- `T_4_CLC`, `T_5_CLC`: Measured temperatures of the soda solutions.
+- `C_45CLC`: Measured conductivity of the soda solution.
+- `COND_45`: Setpoint for the target conductivity.
+- `T45_ALR`, `STOPALL`: Alarm and global stop flags.
+
+@outputs
+- `XVM012`, `XVM013`: Commands to open the water fill valves for Tank 4 and Tank 5.
+- `P4M68`, `XVM027`, `XVM030`: Commands to control the circulation pump and valves.
+- `XVM040`: Command to open the steam valve for heating.
+- `P4057`, `XVM018`, `XVM019`: Commands to control the soda dosing pump and valves.
+- `T4_BUSY`, `T5_BUSY`: The critical interlock flags indicating whether each tank is available for use.
+
+@notes
+- This code is for a GE/Emerson RX3i PLC and is written in Structured Text (ST).
+- This is one of the most complex individual logic blocks, as it manages two redundant resources and all the logic for keeping them prepared for a high-demand manufacturing environment. The logic for switching between the active tanks (`SWITCHD`) is particularly critical.
+*)
+VAR_GLOBAL
+	(* Global System Variables *)
+	#ALW_OFF AT %S00008 : BOOL; (* Always OFF *)
+	#ALW_ON AT %S00007 : BOOL; (* Always ON *)
+	#T_MIN AT %S00006 : BOOL; (* 1.0 minute timer contact. *)
+
+	(* CIP Status *)
+	A2_STRT AT %M00133 : BOOL; (* CIP A stage 2 started *)
+	B2_STRT AT %M00147 : BOOL; (* CIP B stage 2 started *)
+	C2_STRT AT %M00158 : BOOL; (* CIP C stage 2 started *)
+
+	(* Process Control *)
+	ENDALL AT %M00105 : BOOL; (* End all processes *)
+	STOPALL AT %M00104 : BOOL; (* Stop all processes *)
+	T45_ALR AT %M00175 : BOOL; (* Tanks 4,5 in alarm state. *)
+	T45_STP AT %M00182 : BOOL; (* Tanks 4,5 stopped HMI *)
+	T45MMIS AT %M00201 : BOOL; (* Soda tanks stoppped from MMI. *)
+	T45CIRC AT %M00200 : BOOL; (* SODA in circulation mode *)
+	D_Step21 AT %M00421 : BOOL; (* Line D *)
+	D_Step22 AT %M00422 : BOOL; (* שטיפה ריקון *)
+	D_Step23 AT %M00423 : BOOL; (* Line D *)
+	D_Step24 AT %M00424 : BOOL; (* Line D *)
+	D_Step28 AT %M00428 : BOOL; (* Line D *)
+	D_Step30 AT %M00430 : BOOL; (* Line D *)
+
+	(* Tank 4 (Soda 1) *)
+	HILVL4 AT %M00120 : BOOL; (* High level Soda 1 *)
+	LOLVL4 AT %M00112 : BOOL; (* Low level Soda1 *)
+	T4_BUSY AT %M00125 : BOOL; (* Soda 1 tank busy *)
+	T4_FLNG AT %M00202 : BOOL; (* Soda tank 4 filling water *)
+	T4ACTIV AT %M00127 : BOOL; (* Soda1(tnk 4) active,Soda2 passiv *)
+	T4LSTAF AT %M00204 : BOOL; (* Tank 4 last state of active flag *)
+	T_4_CLC AT %R00117 : INT; (* Calculated Temp in SODA1 brl *)
+
+	(* Tank 5 (Soda 2) *)
+	HILVL5 AT %M00113 : BOOL; (* High level Soda2 *)
+	LOLVL5 AT %M00121 : BOOL; (* Low level Soda2 *)
+	T5_BUSY AT %M00126 : BOOL; (* Soda 2 tank busy *)
+	T5_FLNG AT %M00203 : BOOL; (* Soda tank 5 filling water *)
+	T_5_CLC AT %R00118 : INT; (* Calculated Temp in SODA2 brl *)
+	M02050 AT %M02050 : BOOL; (* CIP Soda Tank2 Canceled *)
+
+	(* Analog & Calculated Values *)
+	AUX1 AT %R00102 : ARRAY[0..4] OF WORD; (* Temp register 1 *)
+	C_45CLC AT %R00119 : INT; (* Calculated Cond in SODA 1/2 brl *)
+	COND_45 AT R00536[56] : INT; (* Required Conduct in Soda 1/2 brl *)
+	
+	(* Timers Data *)
+	T45CRCT AT %R00219 : TON (*ARRAY[0..3] OF WORD*); (* Soda tanks circulation timer *)
+	T45CRST AT %R00222 : TON (*ARRAY[0..3] OF WORD*); (* Soda tanks circulation stop timr *)
+	T45IDLT AT %R00216 : UPCTR (*ARRAY[0..3]*) OF WORD; (* Soda tanks idle timer *)
+	TMR_R00476_inst : TON;
+
+	(* Input Signals *)
+	LSL3067 AT %I00067 : BOOL; (* SODA TANK 1 LOW LEVEL *)
+	LSL3081 AT %I00081 : BOOL; (* SODA TANK 2 LOW LEVEL *)
+	P3088 AT %I00088 : BOOL; (* SODA TANK 1, 2 HITING CIRCULATI *)
+
+	(* Output Coils (Valves, Pumps) *)
+	P4057 AT %M00057 : BOOL; (* Soda Pump *)
+	P4M68 AT %M00068 : BOOL; (* SODA TANK 1, 2 HITING CIRCULATI *)
+	XVM012 AT %M00012 : BOOL; (* WATER TO SODA TANK 1 TO "OPEN" *)
+	XVM013 AT %M00013 : BOOL; (* WATER TO SODA TANK 2 TO "OPEN" *)
+	XVM018 AT %M00018 : BOOL; (* SODA 45% VALVE TO SODA TANK 1 T *)
+	XVM019 AT %M00019 : BOOL; (* SODA 45% VALVE TO SODA TANK 2 T *)
+	XVM027 AT %M00027 : BOOL; (* FROM SODA TANK 1 TO HITING CIRC *)
+	XVM030 AT %M00030 : BOOL; (* FROM SODA TANK 2 TO HITING CIRC *)
+	XVM040 AT %M00040 : BOOL; (* STEAM TO EXCHENGER OF SODA TANK *)
+	XVM055 AT %M00055 : BOOL; (* FROM SODA TANK 1 TO WASTE *)
+	XVM056 AT %M00056 : BOOL; (* FROM SODA TANK 2 TO WASTE *)
+	XVM060 AT %M00060 : BOOL; (* 3-WAY VALVE FROM HEATING TO SOD *)
+	
+	(* Internal Memory Bits *)
+	M00221 AT %M00221 : BOOL;
+	M00224 AT %M00224 : BOOL;
+	M00233 AT %M00233 : BOOL;
+	M00233_R_TRIG : R_TRIG;
+	M00284 AT %M00284 : BOOL;
+	M00293 AT %M00293 : BOOL;
+	M00294 AT %M00294 : BOOL;
+	M00299 AT %M00299 : BOOL;
+	M00301 AT %M00301 : BOOL;
+
+	(* Timer Data (Legacy Addressing) *)
+	R00476 AT %R00476 : ARRAY[0..3] OF WORD;
+	R00536 AT %R00536 : ARRAY[0..64] OF WORD;
+		
+	(* Inter-rung continuation coils *)
+	rung17_cont : BOOL;
+	rung19_cont : BOOL;
+	rung34_cont : BOOL;
+	rung38_cont : BOOL;
+	_Bit : BOOL;
+	
+END_VAR
+VAR
+	SWITCHD : BOOL;
+	IDLETMR : BOOL;
+	MINCRCT : BOOL;
+	CANMSR : BOOL;
+	COND_OK : BOOL;
+	CND_OK : BOOL;
+	TEMP4OK : BOOL;
+	TMP_0K : BOOL;
+	TEMP5OK : BOOL;
+	TMP5_OK : BOOL;
+	T45FREE : BOOL;
+	T4_OK : BOOL;
+	T5_OK : BOOL;
+	CANSTOP : BOOL;
+	_Bit1 : BOOL;
+	WTR2TK4 : BOOL;
+	WTNK_OK : BOOL;
+	STR_57M : BOOL;
+END_VAR
+
+(* Rung 1: COMMENT0 *)
+
+(* Rung 2: Tanks 4,5 stopped HMI *)
+T45_STP := T45_ALR OR STOPALL OR T45MMIS OR ENDALL OR M00299;
+
+(* Rung 3 *)
+M00233_R_TRIG(CLK := (M00224 OR M00221) AND NOT A2_STRT AND NOT B2_STRT AND NOT C2_STRT);
+M00233 := M00233_R_TRIG.Q;
+
+
+(* Rung 4: T4 Soda Filling *)
+
+(* Rung 5: Soda tank 4 filling water *)
+T4_FLNG := (NOT LOLVL4
+			OR (T4_FLNG AND NOT HILVL4)
+			OR (#ALW_ON AND M00233 AND NOT HILVL4))
+		AND NOT D_Step21 AND NOT D_Step22 AND NOT D_Step23 AND NOT D_Step24 AND NOT D_Step28 AND NOT D_Step30;
+
+
+(* Rung 6: T5 Canceled (%M02050) *)
+
+(* Rung 7: Soda tank 5 filling water *)
+T5_FLNG := (NOT LOLVL5
+			OR (T5_FLNG AND NOT HILVL5)
+			OR (M00233 AND NOT HILVL5))
+		AND M02050 AND NOT D_Step21 AND NOT D_Step22 AND NOT D_Step23 AND NOT D_Step24 AND NOT D_Step28 AND NOT D_Step30;
+
+(* Rung 8: Active tank was switched *)
+SWITCHD := (T4LSTAF AND NOT T4ACTIV) OR (NOT T4LSTAF AND T4ACTIV)
+			AND M02050;
+
+(* Rung 9: COMMENT1 *)
+
+(* Rung 10: Time between circulations *)
+T45IDLT(EN := (NOT T45CIRC AND #T_MIN), R := (T45CIRC OR SWITCHD), PV := 15);
+IDLETMR := T45IDLT.Q;
+
+(* Rung 11: COMMENT2 *)
+
+(* Rung 12: Minimal circulation time *)
+T45CRCT(IN := (T45CIRC AND NOT ENDALL AND NOT STOPALL AND NOT T45_STP),
+			 R  := ( NOT T45CIRC OR SWITCHD),
+			 PT := T#60S);
+MINCRCT := T45CRCT.Q;
+
+(* Rung 13: COMMENT3 *)
+
+(* Rung 14: Can mesure conductivuty & temp. *)
+CANMSR := NOT SWITCHD AND T45CIRC AND NOT ENDALL AND NOT STOPALL AND NOT T45_STP AND (T45CRCT.ET >= T#30S);
+M00284 := CANMSR;
+
+(* Rung 15: COMMENT4 *)
+
+(* Rung 16: Conductivity OK *)
+
+IF CANMSR OR M00284 THEN
+	AUX1[0] := COND_45 - 0;
+	IF C_45CLC >= AUX1[0] THEN
+		COND_OK := TRUE;
+		CND_OK := TRUE;
+	ELSE
+		COND_OK := FALSE;
+		CND_OK := FALSE;
+	END_IF;
+ELSE
+	COND_OK := FALSE;
+	CND_OK := FALSE;
+END_IF;
+
+(* Rung 17 *)
+IF CANMSR OR M00284 THEN
+	AUX1[0] := R00536[57] + 2;
+	_Bit := (T_4_CLC >= AUX1[0]);
+ELSE
+	_Bit := FALSE;
+END_IF;
+
+(* Rung 18: Temperature in tank 4 is OK *)
+TEMP4OK := _Bit OR (#ALW_ON AND NOT TMP_0K);
+
+(* Rung 19 *)
+IF CANMSR OR M00284 THEN
+	AUX1[0] := R00536[58] - 0;
+	_Bit := (T_5_CLC >= AUX1[0]);
+ELSE
+	_Bit := FALSE;
+END_IF;
+
+(* Rung 20: Temperature in tank 5 is OK *)
+TEMP5OK := _Bit;
+TMP5_OK := _Bit;
+
+(* Rung 21 *)
+TMR_R00476_inst(IN := (#ALW_ON AND NOT STOPALL AND (T_4_CLC >= R00536[57])), PT := T#60S);
+IF TMR_R00476_inst.Q THEN
+	TMP_0K := TRUE;
+END_IF;
+
+(* Rung 22 *)
+IF #ALW_ON AND NOT STOPALL AND (T_4_CLC < R00536[57]) THEN
+	TMP_0K := FALSE;
+END_IF;
+
+(* Rung 23: tank 4&5 free *)
+T45FREE := #ALW_ON AND NOT A2_STRT AND NOT B2_STRT AND NOT C2_STRT;
+
+(* Rung 24: T4 OK/NOT OK *)
+IF NOT #ALW_OFF AND TEMP4OK AND (COND_OK OR CND_OK) AND NOT T45_STP AND T4ACTIV AND T45FREE AND NOT T5_OK THEN
+	T4_OK := TRUE;
+END_IF;
+
+(* Rung 25 *)
+T5_OK := #ALW_OFF AND (NOT TEMP4OK OR (CND_OK AND TMP5_OK) OR (NOT T45FREE));
+
+(* Rung 26: T4 OK/NOT OK *)
+IF (#ALW_OFF AND (T5_OK OR NOT T45FREE) THEN
+	T4_OK := FALSE;
+END_IF;
+
+(* Rung 27: COMMENT5 *)
+
+(* Rung 28: Can stop circulation *)
+T45CRST(IN := (T45CIRC AND MINCRCT AND (COND_OK OR CND_OK) AND (TEMP4OK OR TEMP5OK)), PT := T#1S);
+CANSTOP := T45CRST.Q;
+
+(* Rung 29: SODA in circulation mode *)
+_Bit  := T4ACTIV AND(NOT TEMP4OK OR (NOT T4_FLNG AND(IDLETMR OR SWITCHD OR NOT COND_OK)));
+_Bit1 := NOT T4ACTIV AND((NOT HILVL5 AND M02050) OR (NOT T5_FLNG AND (IDLETMR OR SWITCHD)));
+IF  _Bit OR _Bit1 THEN 
+	T45CIRC := TRUE;
+END_IF;
+	
+IF (_Bit OR _Bit1) AND T4ACTIV THEN
+	T4LSTAF := TRUE;
+ELSE 
+	T4LSTAF := FALSE;
+END_IF;
+
+
+(* Rung 30: SODA in circulation mode *)
+IF CANSTOP OR (T4ACTIV AND T4_FLNG) OR (NOT T4ACTIV AND T5_FLNG) THEN
+	T45CIRC := FALSE;
+END_IF;
+
+(* Rung 31: COMMENT6 *)
+
+(* Rung 32 *)
+_Bit := NOT D_Step21 AND NOT D_Step22 AND NOT D_Step23 AND NOT D_Step24 AND NOT D_Step28 AND NOT D_Step30 AND NOT STOPALL AND NOT ENDALL AND NOT T45_STP;
+WTR2TK4 := _Bit AND T4ACTIV AND T4_FLNG;
+XVM013 := _Bit AND M02050 AND NOT T4ACTIV AND T5_FLNG;
+
+(* Rung 33: WATER TO SODA TANK 1 TO "OPEN" *)
+XVM012 := #ALW_ON AND NOT WTNK_OK AND WTR2TK4;
+
+(* Rung 34 *)
+_Bit := (#ALW_OFF AND NOT STOPALL AND NOT ENDALL AND NOT T45_STP)
+		AND ((T4ACTIV AND HILVL4 AND XVM055) OR (NOT T4ACTIV AND HILVL5 AND NOT XVM056));
+
+(* Rung 35: FROM SODA TANK 1 TO HITING CIRC *)
+_Bit := T45CIRC AND NOT ENDALL AND NOT STOPALL AND NOT T45_STP AND NOT T4ACTIV
+		AND(T4ACTIV AND NOT T4_FLNG)OR ( NOT T4ACTIV AND NOT T5_FLNG);
+_Bit1 := #ALW_ON AND M00301 AND ((LSL3081 AND M02050) OR LSL3067) 		
+XVM027 := (_Bit OR _Bit1) AND NOT M00293;
+XVM030 := (_Bit OR _Bit1) AND NOT M00294 AND M02050;
+P4M68 := (_Bit OR _Bit1);
+
+(* Rung 36: STEAM TO EXCHENGER OF SODA TANK *)
+_Bit    := CANMSR AND T45CIRC AND NOT ENDALL AND NOT STOPALL AND NOT T45_STP
+		   AND ((T4ACTIV AND NOT T4_FLNG) OR (NOT T4ACTIV AND NOT T5_FLNG));
+XVM040  := _Bit AND ((T4ACTIV AND TEMP4OK) OR (NOT T4ACTIV AND NOT TEMP5OK));
+STR_57M := _Bit AND NOT COND_OK AND (#ALW_ON OR XVM019);
+
+(* Rung 37: Soda Pump *)
+P4057 := NOT STOPALL AND STR_57M AND P3088 AND #T_MIN AND (TEMP4OK OR NOT TEMP5OK);
+
+(* Rung 38 *)
+_Bit := (C_45CLC <= COND_45);
+
+(* Rung 39: SODA 45% VALVE TO SODA TANK 1 T *)
+XVM018 := _Bit AND P4057 AND NOT #ALW_OFF AND T4ACTIV;
+XVM019 := _Bit AND P4057 AND NOT #ALW_OFF AND NOT T4ACTIV AND M02050;
+
+
+(* Rung 40: 3-WAY VALVE FROM HEATING TO SOD *)
+XVM060 := (#ALW_ON AND T4ACTIV AND NOT STOPALL AND NOT ENDALL AND NOT T45_STP AND NOT #T_MIN AND T45CIRC)
+		  OR (#ALW_ON AND M00301) OR P4M68;
+
+(* Rung 41: COMMENT7 *)
+
+(* Rung 42: Soda 1 tank busy *)
+_Bit := (T4ACTIV AND T4_FLNG) OR (NOT T4ACTIV AND T5_FLNG) OR T45CIRC OR T45_STP;
+T4_BUSY := _Bit AND T4ACTIV AND NOT B2_STRT;
+T5_BUSY := _Bit AND NOT T4ACTIV;

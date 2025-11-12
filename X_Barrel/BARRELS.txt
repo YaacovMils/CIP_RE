@@ -1,0 +1,183 @@
+(*!
+@purpose
+This program (`BARRELS.txt`) implements a specialized, sequential logic for managing the Cleaning-In-Place (CIP) process for portable barrels. It acts as a high-level state machine that uses the underlying functionality of the main CIP Line C to execute a complete, multi-stage cleaning cycle.
+
+The program sequences through its own stages (`BR_ST1`, `BR_ST2`, `BR_ST3`), but instead of controlling pumps and valves directly, it sends commands to the CIP C program (`CIPCCDL`) and waits for feedback that the commanded action is complete (via the `C_STAT` word). This allows it to orchestrate a complex cleaning sequence (pre-rinse, wash, final rinse) by chaining together simpler operations from the main CIP skid.
+
+@inputs
+- `BR_WORK` (%M00184): The master start flag for the entire barrel CIP sequence.
+- `C_STAT` (%R09049): The status word from the CIP C process. This program specifically monitors bit 7 (`AND 64`), which indicates that the current CIP C operation has finished.
+- `FQCCQTY` (%R09015): The totalized volume of fluid delivered from CIP Line C, used to determine if the barrel is full.
+- `CIPCVOL` (%R00597): The target fill volume for the barrel.
+- `LSH3072`, `LSL3073`: High and low-level switches for a temporary return tank.
+- `BR2USES` (%M00189): A flag to select the cleaning agent for stage 2 (TRUE for soda, FALSE for acid).
+- `STOPALL`, `ENDALL`: Global stop/end commands.
+
+@outputs
+- `CIPCCDL` (%R00200): A local command register used to send stage commands (1=Start S1, 2=Start S2 Soda, 3=Start S2 Acid, 4=Start S3, 7=End) to the CIP C program.
+- `BR_ST1`, `BR_ST2`, `BR_ST3`: Internal state flags for the barrel cleaning sequence (Stage 1, 2, 3).
+- `BR_END` (%M00188): A flag indicating the entire barrel CIP sequence is complete.
+- `XVM038`, `XVM039`: Commands to open valves for routing fluid to/from the temporary tank.
+- `P4072`: Command to run the barrel return pump.
+- `En_CIP_SEQ`: A flag to notify another process that the sequence has finished.
+
+@notes
+- This code is for a GE/Emerson RX3i PLC and is written in Structured Text (ST).
+- This program is a great example of hierarchical control, where a master sequencing program (this one) controls a subordinate process (CIP Line C) to achieve a larger goal.
+- The logic to transition between stages is entirely dependent on waiting for the "command complete" bit from `C_STAT`, highlighting the tight integration between this program and the `C_CIP` logic.
+*)
+VAR_GLOBAL
+	#ALW_OFF AT %S00008 : BOOL; (* Always OFF *)
+	#ALW_ON AT %S00007 : BOOL; (* Always ON *)
+	BR2USES AT %M00189 : BOOL; (* Barrel CIP uses soda on stage 2. *)
+	BR_END AT %M00188 : BOOL; (* Barrel end CIP *)
+	BR_ST1 AT %M00185 : BOOL; (* Barrel stage 1 *)
+	BR_ST2 AT %M00186 : BOOL; (* Barrel stage 2 *)
+	BR_ST3 AT %M00187 : BOOL; (* Barrel stage 3 *)
+	BR_WORK AT %M00184 : BOOL; (* Barrel CIP in process *)
+	C_STAT AT %R09049 : WORD; (* CIP C Status *)
+	C_STOP AT %M00155 : BOOL; (* CIP C stopped *)
+	CIPCCDL AT %R00200 : INT; (* CIP C command (local-no genius) *)
+	CIPCTMR AT %R00201 : ARRAY [0..3] OF WORD; (* CIP C End of stage timer *)
+	CIPCVOL AT %R00597 : INT; (* Volume of recator of CIP C *)
+	En_CIP_SEQ AT %M01109 : BOOL; (* *)
+	ENDALL AT %M00105 : BOOL; (* End all processes *)
+	FQCCQTY AT %R09015 : INT; (* FQC C quantity (+genius send) *)
+	LSH3072 AT %I00072 : BOOL; (* TEMP. TANK HIGH LEVEL *)
+	LSL3073 AT %I00073 : BOOL; (* TEMP. TANK LOW LEVEL *)
+	M00061 AT %M00061 : BOOL; (* *)
+	M00062 AT %M00062 : BOOL; (* *)
+	M00063 AT %M00063 : BOOL; (* *)
+	M00280 AT %M00280 : BOOL; (* *)
+	M00299 AT %M00299 : BOOL; (* *)
+	P4072 AT %M00072 : BOOL; (* Barrel Returen Pump To CIP_C *)
+	R00455 AT %R00455 : INT; (* *)
+	R09066 AT %R09066 : ARRAY [0..3] OF WORD; (* *)
+	STOPALL AT %M00104 : BOOL; (* Stop all processes *)
+	XVM038 AT %M00038 : BOOL; (* FROM CIP C TANK TO TEMP. TANK T *)
+	XVM039 AT %M00039 : BOOL; (* FROM TEMP. TANK TO CIPS "C" TO *)
+	_Bit AT %T00002 : BOOL; (* temporary bit *)
+END_VAR
+
+VAR
+	TON_CIPCTMR : TON;
+	TON_R09066 : TON;
+END_VAR
+
+(* Rung 1: COMMENT0 *)
+
+(* Rung 2: Barrel is full *)
+FULL := BR_WORK AND (BR_ST1 OR BR_ST2 OR BR_ST3) AND (FQCCQTY >= R00455)) ;
+
+(* Rung 3 *)
+
+(* Rung 4 *)
+IF #ALW_OFF AND (CIPCVOL = 0) THEN
+	R00455 := 500;
+END_IF;
+
+(* Rung 5 *)
+IF #ALW_OFF AND (CIPCVOL > 300) THEN
+	R00455 := CIPCVOL;
+END_IF;
+
+(* Rung 6: COMMENT1 *)
+
+(* Rung 7: CIP C washes barrel *)
+WASH := BR_WORK AND NOT STOPALL AND NOT ENDALL AND NOT BR_END AND ((C_STAT AND 128) <> 0);
+
+(* Rung 8: Flush barrel *)
+FLUSH := (WASH AND (BR_ST3 OR BR_ST2))
+		  OR (FULL AND (BR_ST1 BR_ST2 OR BR_ST3))
+		  AND NOT C_STOP AND NOT STOPALL AND NOT ENDALL AND NOT BR_END;
+
+(* Rung 9: Fill barrel *)
+FILL := NOT FULL AND ((BR_ST1 OR NOT WASH AND BR_ST2) OR BR_ST3)
+		AND NOT STOPALL AND NOT ENDALL AND NOT BR_END;
+
+(* Rung 10: COMMENT2 *)
+
+(* Rung 11: CIP ended (bit 7 in status) *)
+CIP_END := BR_WORK AND ((C_STAT AND 64) <> 0);
+
+(* Rung 12: Temp tank empty=barrel empty *)
+TON_CIPCTMR(IN := (NOT WASH AND FLUSH AND NOT C_STOP (AND NOT M00280 OR NOT LSH3072)) AND #ALW_ON,
+			PT := T#40S);
+END_STG := TON_CIPCTMR.Q;
+
+(* Rung 13: COMMENT3 *)
+
+(* Rung 14: FROM CIP C TANK TO TEMP. TANK T *)
+_Bit := NOT FILL AND NOT C_STOP AND NOT STOPALL AND NOT ENDALL AND NOT BR_END AND XVM038;
+
+(* Rung 15 *)
+TON_R09066(IN := #ALW_ON AND FULL AND LSH3072,
+		   PT := T#30S);
+M00280 := NOT TON_R09066.Q;
+
+(* Rung 16: FROM TEMP. TANK TO CIPS "C" TO *)
+XVM039 := #ALW_ON AND NOT BR_END AND (M00280 OR(XVM039 AND P4072));
+P4072 := XVM039 AND LSL3073;
+
+(* Rung 17: COMMENT4 *)
+
+(* Rung 18: CIP C command (local-no genius) *)
+IF BR_WORK AND END_STG AND NOT CIP_END THEN
+	CIPCCDL := 7;
+END_IF;
+
+(* Rung 19: COMMENT5 *)
+
+(* Rung 20: Barrel end CIP *)
+IF CIP_END AND BR_WORK AND BR_ST3 THEN
+	BR_END := TRUE;
+	En_CIP_SEQ := TRUE;
+END_IF;
+IF CIP_END AND BR_WORK AND BR_ST3 AND NOT M00299 THEN
+	BR_WORK := FALSE;
+END_IF;
+
+(* Rung 21: CIP C command (local-no genius) *)
+IF CIP_END AND BR_WORK AND BR_ST2 THEN
+	CIPCCDL := 4;
+	BR_ST3 := TRUE;
+	BR_ST2 := FALSE;
+END_IF;
+
+(* Rung 22: CIP C command (local-no genius) *)
+IF CIP_END AND BR_WORK AND BR_ST1 AND BR2USES THEN
+	CIPCCDL := 2;
+	BR_ST2 := TRUE;
+	BR_ST1 := FALSE;
+END_IF;
+
+(* Rung 23: CIP C command (local-no genius) *)
+IF CIP_END AND BR_WORK AND BR_ST1 AND NOT BR2USES THEN
+	CIPCCDL := 3;
+	BR_ST2 := TRUE;
+	BR_ST1 := FALSE;
+END_IF;
+
+(* Rung 24: CIP C command (local-no genius) *)
+IF CIP_END AND BR_WORK AND NOT BR_ST1 AND NOT BR_ST2 AND NOT BR_ST3 THEN
+	CIPCCDL := 1;
+	BR_ST1 := TRUE;
+	CIP_END := FALSE;
+END_IF;
+
+(* Rung 25: CIP C command (local-no genius) *)
+IF BR_END THEN
+	CIPCCDL := 7;
+	BR_ST1 := FALSE;
+	BR_ST2 := FALSE;
+	BR_ST3 := FALSE;
+END_IF;
+
+(* Rung 26 *)
+M00061 := BR_ST1;
+
+(* Rung 27 *)
+M00062 := BR_ST2;
+
+(* Rung 28 *)
+M00063 := BR_ST3;

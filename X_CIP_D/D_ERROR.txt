@@ -1,0 +1,488 @@
+(*!
+@purpose
+This program (`D_ERROR.txt`) is the central error handling and alarm generation logic for the entire "CIP D" process. It is a comprehensive safety and diagnostic routine that monitors for a wide range of potential fault conditions, from individual device failures to system-level resource conflicts.
+
+Its primary functions are:
+1.  **Device Fault Monitoring:** For each valve and pump, it uses timers to compare the software command with the physical feedback from the field. If a device fails to reach its commanded state (e.g., a valve commanded to open does not provide an "open" feedback signal) within a set time, a specific fault flag is latched.
+2.  **Motor Protection:** It monitors for motor overload signals from the pump starters.
+3.  **Communication Watchdog:** It checks a "live bit" from a connected system. If the bit stops toggling, it generates a communication error.
+4.  **Resource Conflict Detection:** It verifies that required resources (like the main water or chemical tanks) are not busy before allowing certain CIP steps to proceed. If a tank is unavailable, it sets a `Tanks_Error`.
+5.  **Alarm Management:** It provides alarm masking for each individual fault, allowing operators to bypass faulty sensors for maintenance. It also includes a master reset input to clear all latched alarms.
+6.  **Fault Aggregation:** It groups all individual device alarms into a single alarm WORD (`AL1_16_CIP_D`) for HMI display and consolidates all major faults into one general fault flag (`D_Farm_FLT`).
+
+@inputs
+- `XV*_Oper`, `P4169_Start_Cmd`: The internal software commands to operate valves and pumps.
+- `XV*_O`, `XV*_C`, `P4169_Run`: The digital feedback signals from the devices in the field.
+- `P4169_OL`: The motor overload input from the pump starter.
+- `Live_Bit`: A toggling bit from another system used for the communication watchdog.
+- `D_Step*`: The active step flags from `D_BITAL.txt`, used for the resource conflict check.
+- `T*_BUSY`: Flags indicating if the main supply tanks are in use by another process.
+- `Rx_Cooker_RST`: The master signal to reset all latched faults.
+- `*_Mask`: A series of boolean flags that can be used to disable individual alarms.
+
+@outputs
+- `D_Farm_FLT`: A general fault flag for the entire CIP D system.
+- `*_Fault`, `*_FLT`: Numerous specific boolean flags that are latched when a particular fault occurs (e.g., `XV4108_Fault`, `P4169_FB_FLT`).
+- `AL1_16_CIP_D`: A 16-bit WORD where each bit represents a different alarm, providing a compact summary for the HMI.
+- `CommError`, `Tanks_Error`: High-level flags for specific system-wide errors.
+
+@notes
+- This code is for a GE/Emerson RX3i PLC and is written in Structured Text (ST).
+- The "command vs. feedback" timer logic is a standard and robust method for detecting device failures in industrial automation.
+- This program is critical for the safety and reliability of the CIP D process, providing essential diagnostic information to operators.
+*)
+VAR_GLOBAL
+	_ALW_OFF AT %S00008 : BOOL; (* Always OFF *)
+	AL1_16_CIP_D AT %R09152 : WORD; (* Alarms 1-16 *)
+	CommError AT %M00328 : BOOL; (* Communication  Error With Cooker *)
+	D_Farm_FLT AT %M00640 : BOOL; (* General Fault CIP D *)
+	D_Step1 AT %M00401 : BOOL; (* Line D *)
+	D_Step100 AT %M00489 : BOOL; (* Final rinse return *)
+	D_Step21 AT %M00421 : BOOL; (* Line D *)
+	D_Step23 AT %M00423 : BOOL; (* Line D *)
+	D_Step24 AT %M00424 : BOOL; (* Line D *)
+	D_Step28 AT %M00428 : BOOL; (* Line D *)
+	D_Step29 AT %M00429 : BOOL; (* Line D *)
+	D_Step3 AT %M00403 : BOOL; (* Line D *)
+	D_Step4 AT %M00404 : BOOL; (* First rinse waiting for conductivity *)
+	D_Step41 AT %M00441 : BOOL; (* Line D *)
+	D_Step43 AT %M00443 : BOOL; (* Line D *)
+	D_Step44 AT %M00444 : BOOL; (* Line D *)
+	D_Step48 AT %M00448 : BOOL; (* Line D *)
+	D_Step49 AT %M00449 : BOOL; (* Intermediate rinse flips *)
+	D_Step61 AT %M00461 : BOOL; (* Line D *)
+	D_Step63 AT %M00463 : BOOL; (* Line D *)
+	D_Step64 AT %M00464 : BOOL; (* Line D *)
+	D_Step68 AT %M00468 : BOOL; (* Line D *)
+	D_Step69 AT %M00469 : BOOL; (* Line D *)
+	D_Step8 AT %M00408 : BOOL; (* Line D *)
+	D_Step81 AT %M00481 : BOOL; (* Line D *)
+	D_Step83 AT %M00483 : BOOL; (* Line D *)
+	D_Step84 AT %M00484 : BOOL; (* Line D *)
+	D_Step88 AT %M00488 : BOOL; (* Line D *)
+	D_Step9 AT %M00409 : BOOL; (* Line D *)
+	Live_Bit AT %M00808 : BOOL;
+	M02050 AT %M02050 : BOOL; (* CIP Soda Tank2 Canceled *)
+	P4169_FB_FLT AT %M00672 : BOOL; (* P4169 Feedback Fault *)
+	P4169_Mask AT %M00592 : BOOL; (* Alarm Mask *)
+	P4169_OL AT %M00554 : BOOL; (* M01CI001 Overload *)
+	P4169_OL_Fault AT %M00652 : BOOL;
+	P4169_Run AT %M00555 : BOOL; (* P4169 Run FeedBack *)
+	P4169_Start_Cmd AT %M00712 : BOOL; (* CIP_D Pump *)
+	P6169_Fault AT %M00612 : BOOL; (* P6169_Fault *)
+	Rx_Cooker_RST AT %M00806 : BOOL;
+	T1_BUSY AT %M00122 : BOOL; (* Water tank busy *)
+	T2_BUSY AT %M00123 : BOOL; (* Recovery water tank busy *)
+	T3_BUSY AT %M00124 : BOOL; (* Acid tank busy *)
+	T4_BUSY AT %M00125 : BOOL; (* Soda 1 tank busy *)
+	T5_BUSY AT %M00126 : BOOL; (* Soda 2 tank busy *)
+	Tanks_Error AT %M00329 : BOOL; (* Tanks  Not Available *)
+	XV4102_Fault AT %M00603 : BOOL; (* XV40102 Fault *)
+	XV4102_Mask AT %M00583 : BOOL; (* XV40102 Alarm Mask *)
+	XV4102_O AT %M00543 : BOOL; (* XV40102 Open FeedBack *)
+	XV4102_O_FLT AT %M00643 : BOOL; (* XV40102 Open Fault *)
+	XV4102_Oper AT %M00683 : BOOL; (* CIP_D Soda Returen *)
+	XV4104_Fault AT %M00604 : BOOL; (* XV40104 Fault *)
+	XV4104_Mask AT %M00584 : BOOL; (* XV40104 Alarm Mask *)
+	XV4104_O AT %M00544 : BOOL; (* XV40104 Open FeedBack *)
+	XV4104_O_FLT AT %M00644 : BOOL; (* XV40104 Open Fault *)
+	XV4104_Oper AT %M00684 : BOOL; (* CIP_D Soda Returen *)
+	XV4106_Fault AT %M00602 : BOOL; (* XV40106 Fault *)
+	XV4106_Mask AT %M00582 : BOOL; (* XV40106 Alarm Mask *)
+	XV4106_O AT %M00542 : BOOL; (* XV40106 Open FeedBack *)
+	XV4106_O_FLT AT %M00642 : BOOL; (* XV40106 Open Fault *)
+	XV4106_Oper AT %M00682 : BOOL; (* CIP_D Acid Returen *)
+	XV4108_Fault AT %M00601 : BOOL; (* XV40108 Fault *)
+	XV4108_Mask AT %M00581 : BOOL; (* XV40108 Alarm Mask *)
+	XV4108_O AT %M00541 : BOOL; (* XV40108 Open FeedBack *)
+	XV4108_O_FLT AT %M00641 : BOOL; (* XV40108 Open Fault *)
+	XV4108_Oper AT %M00681 : BOOL;
+	XV4111_Fault AT %M00605 : BOOL; (* XV40111 Fault *)
+	XV4111_Mask AT %M00585 : BOOL; (* XV40111 Alarm Mask *)
+	XV4111_O AT %M00545 : BOOL; (* XV40111 Open FeedBack *)
+	XV4111_O_FLT AT %M00645 : BOOL; (* XV40111 Open Fault *)
+	XV4111_Oper AT %M00685 : BOOL;
+	XV4125_Fault AT %M00606 : BOOL; (* XV40125 Fault *)
+	XV4125_Mask AT %M00586 : BOOL; (* XV40125 Alarm Mask *)
+	XV4125_O AT %M00546 : BOOL; (* XV40125 Open FeedBack *)
+	XV4125_O_FLT AT %M00646 : BOOL; (* XV40125 Open Fault *)
+	XV4125_Oper AT %M00686 : BOOL;
+	XV4128_Fault AT %M00609 : BOOL; (* XV40128 Fault *)
+	XV4128_Mask AT %M00589 : BOOL; (* XV40128 Alarm Mask *)
+	XV4128_O AT %M00549 : BOOL; (* XV40128 Open FeedBack *)
+	XV4128_O_FLT AT %M00649 : BOOL; (* XV40128 Open Fault *)
+	XV4128_Oper AT %M00689 : BOOL;
+	XV4131_Fault AT %M00610 : BOOL; (* XV40131 Fault *)
+	XV4131_Mask AT %M00590 : BOOL; (* XV40131 Alarm Mask *)
+	XV4131_O AT %M00550 : BOOL; (* XV40131 Open FeedBack *)
+	XV4131_O_FLT AT %M00650 : BOOL; (* XV40131 Open Fault *)
+	XV4131_Oper AT %M00690 : BOOL;
+	XV4134_Fault AT %M00608 : BOOL; (* XV40134 Fault *)
+	XV4134_Mask AT %M00588 : BOOL; (* XV40134 Alarm Mask *)
+	XV4134_O AT %M00548 : BOOL; (* XV40134 Open FeedBack *)
+	XV4134_O_FLT AT %M00648 : BOOL; (* XV40134 Open Fault *)
+	XV4134_Oper AT %M00688 : BOOL;
+	XV4136_Fault AT %M00607 : BOOL; (* XV40136 Fault *)
+	XV4136_Mask AT %M00587 : BOOL; (* XV40136 Alarm Mask *)
+	XV4136_O AT %M00547 : BOOL; (* XV40136 Open FeedBack *)
+	XV4136_O_FLT AT %M00647 : BOOL; (* XV40136 Open Fault *)
+	XV4136_Oper AT %M00687 : BOOL;
+	XV4181_C AT %M00571 : BOOL; (* XV40181 Close FeedBack *)
+	XV4181_C_FLT AT %M00671 : BOOL; (* XV40181 Close Fault *)
+	XV4181_Fault AT %M00611 : BOOL; (* XV40181 Fault *)
+	XV4181_Mask AT %M00591 : BOOL; (* XV40181 Alarm Mask *)
+	XV4181_O AT %M00551 : BOOL; (* XV40181 Open FeedBack *)
+	XV4181_O_FLT AT %M00651 : BOOL; (* XV40181 Open Fault *)
+	XV4181_Oper AT %M00691 : BOOL;
+END_VAR
+VAR
+	R09301 : TON;
+	R09304 : TON;
+	R09307 : TON;
+	R09310 : TON;
+	R09313 : TON;
+	R09316 : TON;
+	R09319 : TON;
+	R09322 : TON;
+	R09325 : TON;
+	R09328 : TON;
+	R09331 : TON;
+	R09334 : TON;
+	R09337 : TON;
+	R09340 : TON;
+	R09346 : TON;
+	R09349 : TON;
+	_Bit : BOOL;
+	_Bit1 : BOOL;
+	_Bit2 : BOOL;
+	_Bit3 : BOOL;
+END_VAR
+
+(* Rung 1: COMMENT0 *)
+(* Empty Rung *)
+
+(* Rung 2: XV40108 Fault *)
+(* Rung 2: Reset logic based on source file *)
+IF Rx_Cooker_RST THEN
+
+	(* Block 1 Reset: Equivalent of MOVE_WORD 0 to %M00601 *)
+	XV4108_Fault := FALSE; (* %M00601 *)
+	XV4106_Fault := FALSE; (* %M00602 *)
+	XV4102_Fault := FALSE; (* %M00603 *)
+	XV4104_Fault := FALSE; (* %M00604 *)
+	XV4111_Fault := FALSE; (* %M00605 *)
+	XV4125_Fault := FALSE; (* %M00606 *)
+	XV4136_Fault := FALSE; (* %M00607 *)
+	XV4134_Fault := FALSE; (* %M00608 *)
+	XV4128_Fault := FALSE; (* %M00609 *)
+	XV4131_Fault := FALSE; (* %M00610 *)
+	XV4181_Fault := FALSE; (* %M00611 *)
+	P6169_Fault := FALSE; (* %M00612 *)
+	%M00613 := FALSE; (* %M00613 *)
+	%M00614 := FALSE; (* %M00614 *)
+	%M00615 := FALSE; (* %M00615 *)
+	%M00616 := FALSE; (* %M00616 *)
+
+	(* Block 2 Reset: Equivalent of MOVE_WORD 0 to %M00641 *)
+	XV4108_O_FLT := FALSE; (* %M00641 *)
+	XV4106_O_FLT := FALSE; (* %M00642 *)
+	XV4102_O_FLT := FALSE; (* %M00643 *)
+	XV4104_O_FLT := FALSE; (* %M00644 *)
+	XV4111_O_FLT := FALSE; (* %M00645 *)
+	XV4125_O_FLT := FALSE; (* %M00646 *)
+	XV4136_O_FLT := FALSE; (* %M00647 *)
+	XV4134_O_FLT := FALSE; (* %M00648 *)
+	XV4128_O_FLT := FALSE; (* %M00649 *)
+	XV4131_O_FLT := FALSE; (* %M00650 *)
+	XV4181_O_FLT := FALSE; (* %M00651 *)
+	P4169_OL_Fault := FALSE; (* %M00652 *)
+	%M00653 := FALSE; (* %M00653 - Not declared but part of the WORD *)
+	%M00654 := FALSE; (* %M00654 - Not declared but part of the WORD *)
+	%M00655 := FALSE; (* %M00655 - Not declared but part of the WORD *)
+	%M00656 := FALSE; (* %M00656 - Not declared but part of the WORD *)
+
+	(* Additional Resets from source *)
+	XV4181_C_FLT := FALSE;
+	P4169_FB_FLT := FALSE;
+	CommError := FALSE;
+
+END_IF;
+
+(* Rung 3: COMMENT1 *)
+(* Empty Rung *)
+
+(* Rung 4: General Fault CIP D *)
+_Bit := (AL1_16_CIP_D <> 0);
+
+(* Rung 5: General Fault CIP D *)
+D_Farm_FLT := _Bit OR CommError OR Tanks_Error;
+
+(* Rung 6: COMMENT2 *)
+(* Empty Rung *)
+
+(* Rung 7: XV40108 Fault *)
+R09301(IN := ((XV4108_Oper AND NOT XV4108_O) OR (NOT XV4108_Oper AND XV4108_O)) AND NOT XV4108_Mask,
+	   PT := T#20s);
+IF R09301.Q THEN
+	XV4108_O_FLT := TRUE;
+	XV4108_Fault := TRUE;
+END_IF;
+
+(* Rung 8: XV40108 Open Fault *)
+IF XV4108_Mask THEN
+	XV4108_O_FLT := FALSE;
+	XV4108_Fault := FALSE;
+END_IF;
+
+(* Rung 9: COMMENT3 *)
+(* Empty Rung *)
+
+(* Rung 10: XV40106 Fault *)
+R09304(IN := ((XV4106_Oper AND NOT XV4106_O) OR (NOT XV4106_Oper AND XV4106_O)) AND NOT XV4106_Mask,
+	   PT := T#20s);
+IF R09304.Q THEN
+	XV4106_O_FLT := TRUE;
+	XV4106_Fault := TRUE;
+END_IF;
+
+(* Rung 11: XV40106 Open Fault *)
+IF XV4106_Mask THEN
+	XV4106_O_FLT := FALSE;
+	XV4106_Fault := FALSE;
+END_IF;
+
+(* Rung 12: COMMENT4 *)
+(* Empty Rung *)
+
+(* Rung 13: XV40102 Fault *)
+R09307(IN := ((XV4102_Oper AND NOT XV4102_O) OR (NOT XV4102_Oper AND XV4102_O)) AND NOT XV4102_Mask, PT := T#20s);
+IF R09307.Q THEN
+	XV4102_O_FLT := TRUE;
+	XV4102_Fault := TRUE;
+END_IF;
+
+(* Rung 14: XV40102 Open Fault *)
+IF XV4102_Mask THEN
+	XV4102_O_FLT := FALSE;
+	XV4102_Fault := FALSE;
+END_IF;
+
+(* Rung 15: 28/12/2023 Canceled ************************************Soda Tank 2 ****************** *)
+(* Empty Rung *)
+
+(* Rung 16: XV40104 Fault *)
+R09310(IN := M02050 AND ((XV4104_Oper AND NOT XV4104_O) OR (NOT XV4104_Oper AND XV4104_O)) AND NOT XV4104_Mask,
+	   PT := T#20s);
+IF R09310.Q THEN
+	XV4104_O_FLT := TRUE;
+	XV4104_Fault := TRUE;
+END_IF;
+
+(* Rung 17: XV40104 Open Fault *)
+IF XV4104_Mask THEN
+	XV4104_O_FLT := FALSE;
+	XV4104_Fault := FALSE;
+END_IF;
+
+(* Rung 18: COMMENT6 *)
+(* Empty Rung *)
+
+(* Rung 19: XV40111 Fault *)
+R09313(IN := ((XV4111_Oper AND NOT XV4111_O) OR (NOT XV4111_Oper AND XV4111_O)) AND NOT XV4111_Mask, PT := T#20s);
+IF R09313.Q THEN
+	XV4111_O_FLT := TRUE;
+	XV4111_Fault := TRUE;
+END_IF;
+
+(* Rung 20: XV40111 Open Fault *)
+IF XV4111_Mask THEN
+	XV4111_O_FLT := FALSE;
+	XV4111_Fault := FALSE;
+END_IF;
+
+(* Rung 21: COMMENT7 *)
+(* Empty Rung *)
+
+(* Rung 22: XV40125 Fault *)
+R09316(IN := ((XV4125_Oper AND NOT XV4125_O) OR (NOT XV4125_Oper AND XV4125_O)) AND NOT XV4125_Mask, PT := T#20s);
+IF R09316.Q THEN
+	XV4125_O_FLT := TRUE;
+	XV4125_Fault := TRUE;
+END_IF;
+
+(* Rung 23: XV40125 Open Fault *)
+IF XV4125_Mask THEN
+	XV4125_O_FLT := FALSE;
+	XV4125_Fault := FALSE;
+END_IF;
+
+(* Rung 24: COMMENT8 *)
+(* Empty Rung *)
+
+(* Rung 25: XV40136 Fault *)
+R09319(IN := ((XV4136_Oper AND NOT XV4136_O) OR (NOT XV4136_Oper AND XV4136_O)) AND NOT XV4136_Mask, PT := T#20s);
+IF R09319.Q THEN
+	XV4136_O_FLT := TRUE;
+	XV4136_Fault := TRUE;
+END_IF;
+
+(* Rung 26: XV40136 Open Fault *)
+IF XV4136_Mask THEN
+	XV4136_O_FLT := FALSE;
+	XV4136_Fault := FALSE;
+END_IF;
+
+(* Rung 27: COMMENT9 *)
+(* Empty Rung *)
+
+(* Rung 28: XV40134 Fault *)
+R09322(IN := ((XV4134_Oper AND NOT XV4134_O) OR (NOT XV4134_Oper AND XV4134_O)) AND NOT XV4134_Mask, PT := T#20s);
+IF R09322.Q THEN
+	XV4134_O_FLT := TRUE;
+	XV4134_Fault := TRUE;
+END_IF;
+
+(* Rung 29: XV40134 Open Fault *)
+IF XV4134_Mask THEN
+	XV4134_O_FLT := FALSE;
+	XV4134_Fault := FALSE;
+END_IF;
+
+(* Rung 30: 28/12/2023 Canceled ************************************Soda Tank 2 ****************** *)
+(* Empty Rung *)
+
+(* Rung 31: XV40128 Fault *)
+R09325(IN := M02050 AND ((XV4128_Oper AND NOT XV4128_O) OR (NOT XV4128_Oper AND XV4128_O)) AND NOT XV4128_Mask, PT := T#20s);
+IF R09325.Q THEN
+	XV4128_O_FLT := TRUE;
+	XV4128_Fault := TRUE;
+END_IF;
+
+(* Rung 32: XV40128 Open Fault *)
+IF XV4128_Mask THEN
+	XV4128_O_FLT := FALSE;
+	XV4128_Fault := FALSE;
+END_IF;
+
+(* Rung 33: COMMENT11 *)
+(* Empty Rung *)
+
+(* Rung 34: XV40131 Fault *)
+R09328(IN := ((XV4131_Oper AND NOT XV4131_O) OR (NOT XV4131_Oper AND XV4131_O)) AND NOT XV4131_Mask, PT := T#20s);
+IF R09328.Q THEN
+	XV4131_O_FLT := TRUE;
+	XV4131_Fault := TRUE;
+END_IF;
+
+(* Rung 35: XV40131 Open Fault *)
+IF XV4131_Mask THEN
+	XV4131_O_FLT := FALSE;
+	XV4131_Fault := FALSE;
+END_IF;
+
+(* Rung 36: COMMENT12 *)
+(* Empty Rung *)
+
+(* Rung 37: XV40181 Open Fault *)
+R09331(IN := ((XV4181_Oper AND NOT XV4181_O) OR (NOT XV4181_Oper AND XV4181_O)) AND NOT XV4181_Mask, PT := T#20s);
+IF R09331.Q THEN
+	XV4181_O_FLT := TRUE;
+END_IF;
+
+(* Rung 38: XV40181 Fault *)
+XV4181_Fault := XV4181_O_FLT OR XV4181_C_FLT;
+
+(* Rung 39: XV40181 Open Fault *)
+IF XV4181_Mask THEN
+	XV4181_O_FLT := FALSE;
+	XV4181_C_FLT := FALSE;
+END_IF;
+
+(* Rung 40: COMMENT13 *)
+(* Empty Rung *)
+
+(* Rung 41: P4169_OL_Fault *)
+R09337(IN := NOT P4169_OL AND NOT P4169_Mask, PT := T#1s);
+IF R09337.Q THEN
+	P4169_OL_Fault := TRUE;
+END_IF;
+
+(* Rung 42: P6169_Fault *)
+P6169_Fault := P4169_OL_Fault OR P4169_FB_FLT;
+
+(* Rung 43: P4169_OL_Fault *)
+IF P4169_Mask THEN
+	P4169_OL_Fault := FALSE;
+	P4169_FB_FLT := FALSE;
+END_IF;
+
+(* Rung 44: COMMENT14 *)
+(* Empty Rung *)
+
+(* Rung 45: XV40181 Close Fault *)
+R09334(IN := ((NOT XV4181_Oper AND NOT XV4181_C) OR (XV4181_Oper AND NOT XV4181_O)) AND NOT XV4181_Mask, PT := T#20s);
+IF R09334.Q THEN
+	XV4181_C_FLT := TRUE;
+END_IF;
+
+(* Rung 46: COMMENT15 *)
+(* Empty Rung *)
+
+(* Rung 47: P4169 Feedback Fault *)
+R09340(IN := ((P4169_Start_Cmd AND NOT P4169_Run) OR (NOT P4169_Start_Cmd AND P4169_Run)) AND NOT P4169_Mask, PT := T#20s);
+IF R09340.Q THEN
+	P4169_FB_FLT := TRUE;
+END_IF;
+
+(* Rung 48: COMMENT16 *)
+(* Empty Rung *)
+
+(* Rung 49: Alarms 1-16 *)
+(* Block Instruction Analysis: MOVE_BOOL *)
+(* This instruction moves a block of 16 consecutive bits into the bits of a destination WORD. *)
+(* Source: Starts at %M00601 (XV4108_Fault) *)
+(* Destination: %R09152 (AL1_16_CIP_D) *)
+(* Address Range: This instruction reads 16 bits from memory range %M00601 to %M00616 and writes them to the 16 bits of the WORD at %R09152. *)
+AL1_16_CIP_D.0 := XV4108_Fault;
+AL1_16_CIP_D.1 := XV4106_Fault;
+AL1_16_CIP_D.2 := XV4102_Fault;
+AL1_16_CIP_D.3 := XV4104_Fault;
+AL1_16_CIP_D.4 := XV4111_Fault;
+AL1_16_CIP_D.5 := XV4125_Fault;
+AL1_16_CIP_D.6 := XV4136_Fault;
+AL1_16_CIP_D.7 := XV4134_Fault;
+AL1_16_CIP_D.8 := XV4128_Fault;
+AL1_16_CIP_D.9 := XV4131_Fault;
+AL1_16_CIP_D.10 := XV4181_Fault;
+AL1_16_CIP_D.11 := P6169_Fault;
+(* The following source bits (%M613-%M616) were not defined in the provided XML. Using direct addressing. *)
+AL1_16_CIP_D.12 := %M00613;
+AL1_16_CIP_D.13 := %M00614;
+AL1_16_CIP_D.14 := %M00615;
+AL1_16_CIP_D.15 := %M00616;
+
+(* Rung 50: COMMENT17 *)
+(* Empty Rung *)
+
+(* Rung 51: Communication  Error With Cooker *)
+R09346(IN := Live_Bit, PT := T#20s);
+
+(* Rung 52: Communication  Error With Cooker *)
+R09349(IN := NOT Live_Bit, PT := T#20s);
+
+(* Rung 53: Communication  Error With Cooker *)
+IF (R09346.Q OR R09349.Q) THEN
+	CommError := TRUE;            
+END_IF;
+
+(* Rung 54: COMMENT18 *)
+(* Empty Rung *)
+
+(* Rung 55: Tanks  Not Available *)
+
+_Bit := (D_Step81 OR D_Step83 OR D_Step84 OR D_Step88 OR D_Step100) AND T1_BUSY;
+_Bit1 := (D_Step1 OR D_Step3 OR D_Step4 OR D_Step8 OR D_Step9 OR D_Step41 OR D_Step44
+				OR D_Step43 OR D_Step48 OR D_Step49)AND T1_BUSY AND T2_BUSY;
+_Bit2 := (D_Step61 OR D_Step63 OR D_Step64 OR D_Step68 OR D_Step69) AND T3_BUSY AND _ALW_OFF;
+_Bit3 := (D_Step21 OR D_Step23 OR D_Step24 OR D_Step28 OR D_Step29) AND T4_BUSY AND T5_BUSY AND _ALW_OFF);
+Tanks_Error := _Bit OR _Bit1 OR _Bit2 OR _Bit3;

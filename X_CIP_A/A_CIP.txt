@@ -1,0 +1,241 @@
+(*!
+@purpose
+This program (`A_CIP`) manages the detailed logic for executing the Cleaning-In-Place (CIP) process for Line A. It is responsible for selecting the appropriate cleaning/rinsing medium, controlling the filling of the target reactor, and routing the return flow based on conductivity measurements.
+
+The program operates in three main stages:
+1.  **Stage 1 (`A1_STRT`):** Pre-rinse, typically using recovered water (`A1USE_R`).
+2.  **Stage 2 (`A2_STRT`):** Chemical wash, using either soda (`A2USE_S`) or acid.
+3.  **Stage 3 (`A3_STRT`):** Final rinse, using fresh water.
+
+It checks conductivity to validate if the return solution from a chemical wash is within spec to be sent back to its source tank or if it should be sent to drain.
+
+@inputs
+- `A1_STRT`, `A2_STRT`, `A3_STRT`: Boolean flags that activate Stage 1, 2, or 3 of the CIP sequence. These are likely controlled by a higher-level sequencing program.
+- `A_STOP`, `A_END`: Global flags to stop or indicate the end of the Line A CIP process.
+- `A2USE_S`: A flag to specify that the Stage 2 wash is using soda (if FALSE, it uses acid).
+- `T4ACTIV`: A flag to select between two soda tanks (Soda 1 vs. Soda 2).
+- `C_A_CLC`: The current calculated conductivity of the fluid returning from Line A.
+- `COND_3`, `COND_45`: The target conductivity setpoints for acid and soda solutions.
+- `FQCAQTY`: The accumulated volume from the flowmeter for the current fill process.
+- `CIPAVOL`: The target fill volume for the reactor.
+- `LSH*` flags: High-level switch statuses for the Acid, Soda, and Recovery Water tanks, used as interlocks to prevent overfilling.
+- `T*_BUSY`: Flags indicating if source tanks (water, acid, etc.) are busy with another process.
+
+@outputs
+- `A_FILLS`, `A_FULL`: Status flags indicating the reactor is currently filling or has completed filling.
+- `ACID_OK`, `SODA_OK`, `WTR_OK`: Flags indicating if the return fluid conductivity is acceptable for acid, soda, or clean water, respectively. These determine if the fluid is reclaimed or drained.
+- `XVM002` / `XVM004`: Commands to open return valves to Soda Tank 1 / Soda Tank 2.
+- `XVM006`: Command to open the return valve to the Acid Tank.
+- `XVM008`: Command to open the return valve to the Recovery Water Tank.
+- `XVM011`: Command to open the return valve to the drain (Waste).
+- `XVM025`: Command to open the supply valve from the Fresh Water Tank.
+- `XVM028` / `XVM031`: Commands to open supply valves from Soda Tank 1 / Soda Tank 2.
+- `XVM034`: Command to open the supply valve from the Acid Tank.
+- `XVM036`: Command to open the supply valve from the Recovery Water Tank.
+- `XVM047`: Command to open the main valve from the CIP skid to the reactors on Line A.
+- `P4M69`: Command to start the Line A CIP supply pump.
+
+@notes
+- This code is for a GE/Emerson RX3i PLC and is written in Structured Text (ST).
+- The logic heavily relies on external flags (`A1_STRT`, etc.) to determine its behavior, implying it is part of a larger state machine architecture.
+- Timers are used to create delays for valve and pump operations to ensure mechanical actions complete before the next logical step (e.g., waiting for a pump to build pressure).
+- The program resets all its internal state flags when the `A_END` flag is set.
+*)
+VAR_GLOBAL
+	_ALW_OFF AT %S00008 : BOOL; (* Always OFF *)
+	_ALW_ON AT %S00007 : BOOL; (* Always ON *)
+	A1_STRT AT %M00132 : BOOL; (* CIP A stage 1 started *)
+	A1USE_R AT %M00137 : BOOL; (* CIP A stage 1 use recov. water *)
+	A2_STRT AT %M00133 : BOOL; (* CIP A stage 2 started *)
+	A2USE_S AT %M00136 : BOOL; (* CIP A stage 2 use soda *)
+	A3_STRT AT %M00134 : BOOL; (* CIP A Stage 3 started *)
+	A_END AT %M00131 : BOOL; (* CIP A ended and/or stage 3 ended *)
+	A_FILLS AT %M00135 : BOOL; (* CIP A fills the reactor *)
+	A_FULL AT %M00141 : BOOL; (* CIP A filled reactor *)
+	A_STOP AT %M00130 : BOOL; (* CIP A stopped *)
+	AUX1 AT %R00102 : ARRAY [0..4] OF WORD; (* Temp register 1 *)
+	C_A_CLC AT %R00124 : INT; (* Calculated CIP A conductivity *)
+	CIPAVOL AT %R00536[59] : INT; (* Volume of recator of CIP A *)
+	COND_3 AT %R00536[54] : INT; (* Required Conduct. in ACID barrel *)
+	COND_45 AT %R00536[56] : INT; (* Required Conduct in Soda 1/2 brl *)
+	FQCAPLS AT %M00101 : BOOL; (* FQC A Pulse *)
+	FQCAQTY AT %R09013 : INT; (* FQC A quantity (+genius send) *)
+	LOLVL4 AT %M00112 : BOOL; (* Low level Soda1 *)
+	LSH3068 AT %I00068 : BOOL; (* SODA TANK 2 HIGH LEVEL *)
+	LSH3074 AT %I00074 : BOOL; (* WATER RECOVERY TANK HIGH LEVEL *)
+	LSH3076 AT %I00076 : BOOL; (* ASID TANK HIGH LEVEL *)
+	LSH3079 AT %I00079 : BOOL; (* SODA TANK 1 HIGH LEVEL *)
+	M00223 AT %M00223 : BOOL;
+	M00224 AT %M00224 : BOOL;
+	M00304 AT %M00304 : BOOL;
+	M00308 AT %M00308 : BOOL;
+	M02050 AT %M02050 : BOOL; (* CIP Soda Tank2 Canceled *)
+	P4M69 AT %M00069 : BOOL; (* CIPS "A" PUMP TO "RUN" *)
+	R00437 AT %R00437 : ARRAY [0..3] OF WORD;
+	R00440 AT %R00440 : ARRAY [0..3] OF WORD;
+	R00536 AT %R00536 : ARRAY [0..64] OF WORD;
+	R00610 AT %R00610 : INT;
+	R09009 AT %R09009 : INT;
+	T1_BUSY AT %M00122 : BOOL; (* Water tank busy *)
+	T2_BUSY AT %M00123 : BOOL; (* Recovery water tank busy *)
+	T3_BUSY AT %M00124 : BOOL; (* Acid tank busy *)
+	T4ACTIV AT %M00127 : BOOL; (* Soda1(tnk 4) active,Soda2 passiv *)
+	XV4081 AT %M00081 : BOOL; (* XV4081 CIPA *)
+	XVM002 AT %M00002 : BOOL; (* CIPR "A" TO SODA TANK 1 TO "OPE *)
+	XVM004 AT %M00004 : BOOL; (* CIPR "A" TO SODA TANK 2 TO "OPE *)
+	XVM006 AT %M00006 : BOOL; (* CIPR "A" TO ASID TANK TO "OPEN" *)
+	XVM008 AT %M00008 : BOOL; (* CIPR "A" TO RETURN WATER TANK T *)
+	XVM011 AT %M00011 : BOOL; (* CIPR "A" TO WASTE *)
+	XVM025 AT %M00025 : BOOL; (* FROM FRESH WATER TANK TO CIPS " *)
+	XVM028 AT %M00028 : BOOL; (* FROM SODA TANK 1 TO CIPS "A" TO *)
+	XVM031 AT %M00031 : BOOL; (* FROM SODA TANK 2 TO CIPS "A" TO *)
+	XVM034 AT %M00034 : BOOL; (* FROM ASID TANK TO SIPS "A" TO " *)
+	XVM036 AT %M00036 : BOOL; (* FROM RETURN WATER TANK TO CIPS *)
+	XVM047 AT %M00047 : BOOL; (* CIPA TO REACTORS ????? *)
+END_VAR
+
+(* ================================================================================
+NOTE: The following logic utilizes timer function blocks (TMR_TENTHS).
+In a standard IEC 61131-3 environment, these should be implemented by
+declaring instances of the standard TON (Timer On-Delay) function block.
+For this conversion, two instances are required and should be declared in a
+local VAR section of the program where this code is placed:
+
+VAR
+    Rung18_Timer : TON;
+    Rung8_Timer : TON;
+END_VAR
+================================================================================
+*)
+
+(* Rung 1: Acid comes from reactor-end wash *)
+AUX1[0] := INT_TO_WORD(COND_3 - 0);
+ACID_OK := A2_STRT AND NOT A2USE_S AND NOT A_STOP AND NOT A_END AND (C_A_CLC >= WORD_TO_INT(AUX1[0]));
+
+(* Rung 2: Soda comes from reactor-end wash *)
+AUX1[0] := INT_TO_WORD(COND_45 - 0);
+SODA_OK := A2_STRT AND A2USE_S AND NOT A_STOP AND NOT A_END AND (C_A_CLC >= WORD_TO_INT(AUX1[0]));
+
+(* Rung 3: CIP A receives clean water *)
+WTR_OK := A3_STRT AND NOT A_STOP AND NOT A_END AND (C_A_CLC < 5);
+
+(* Rung 4: CIP A fills the reactor *)
+IF (A1_STRT OR SODA_OK OR ACID_OK OR WTR_OK OR A3_STRT) AND NOT A_STOP AND NOT A_END AND NOT A_FULL THEN
+	A_FILLS := TRUE;
+END_IF;
+
+(* Rung 5: Can fill reactor *)
+CANFILL := ((A1_STRT AND (NOT T1_BUSY OR NOT T2_BUSY)) OR (A2_STRT AND A2USE_S AND _ALW_ON AND (T4ACTIV OR NOT T4ACTIV)) OR (A2_STRT AND NOT A2USE_S AND NOT T3_BUSY) OR (A3_STRT AND NOT T1_BUSY)) AND NOT A_STOP AND NOT A_END;
+
+(* Rung 6: FQC A quantity (+genius send) *)
+// A temporary variable is required to pass the logical result to Rung 7
+// This variable should be declared, e.g., VAR Rung6_Continuation : BOOL; END_VAR
+
+Rung6_Continuation := FQCAPLS AND CANFILL AND A_FILLS AND (_ALW_ON OR A2_STRT);
+IF Rung6_Continuation THEN
+    FQCAQTY := FQCAQTY + 10;
+    Rung6_Continuation := (FQCAQTY > CIPAVOL);
+ELSE
+    Rung6_Continuation := FALSE;
+END_IF;
+
+(* Rung 7: CIP A filled reactor *)
+// This logic depends on the Rung6_Continuation variable from the previous rung.
+IF Rung6_Continuation AND NOT M00223 AND _ALW_OFF THEN
+    A_FULL := TRUE;
+	A_FILLS := FALSE;
+END_IF;
+
+IF _ALW_ON AND M00224 AND CANFILL AND _ALW_ON THEN
+	A_FULL := TRUE;
+    A_FILLS := FALSE;
+END_IF;
+
+(* Rung 8: Sets M00224 *)
+// This code requires a declared TON instance, e.g., Rung8_Timer : TON;
+Rung8_Timer(IN := _ALW_ON AND (WORD_TO_INT(R00536[15]) > WORD_TO_INT(R00536[14])), PT := T#30S);
+M00224 := Rung8_Timer.Q;
+
+(* Rung 9: M00308 *)
+M00308 := _ALW_ON AND A2_STRT AND (WORD_TO_INT(R00536[15]) <= 3000);
+
+(* Rung 10: M00223 *)
+M00223 := M00308 AND NOT A_FULL AND A2_STRT AND (FQCAQTY >= CIPAVOL);
+
+(* Rung 11: COMMENT0 *)
+
+(* Rung 12: CIP A stage 1 use recov. water *)
+IF A1_STRT AND NOT A_FULL AND NOT T2_BUSY THEN
+	A1USE_R := TRUE;
+END_IF;
+
+(* Rung 13: COMMENT1 *)
+
+(* Rung 14: FROM FRESH WATER TANK TO CIPS " *)
+XVM025 := CANFILL AND NOT A_FULL AND ((A1_STRT AND T2_BUSY) OR A3_STRT) AND NOT T1_BUSY;
+
+(* Rung 15: FROM RETURN WATER TANK TO CIPS *)
+XVM036 := CANFILL AND NOT A_FULL AND A1_STRT AND NOT T2_BUSY;
+
+(* Rung 16: FROM ASID TANK TO SIPS "A" TO " *)
+XVM028 := CANFILL AND NOT A_FULL AND A2_STRT AND A2USE_S AND T4ACTIV;
+XVM031 := CANFILL AND NOT A_FULL AND A2_STRT AND A2USE_S AND M02050 AND NOT LOLVL4;
+XVM034 := CANFILL AND NOT A_FULL AND A2_STRT AND NOT A2USE_S;
+
+(* Rung 17: CIPA TO REACTORS *)
+// A temporary variable is required to pass the logical result to Rung 18
+// This variable should be declared, e.g., VAR Rung17_Continuation : BOOL; END_VAR
+
+XVM047 := CANFILL AND NOT A_FULL AND (A1_STRT OR A2_STRT OR A3_STRT);
+Rung17_Continuation  := CANFILL AND NOT A_FULL AND (A1_STRT OR A2_STRT OR A3_STRT) NOT M00223;
+
+(* Rung 18: CIPS "A" PUMP TO "RUN" *)
+// This logic depends on the Rung17_Continuation variable from the previous rung.
+// This code requires a declared TON instance, e.g., Rung18_Timer : TON;
+Rung18_Timer(IN := Rung17_Continuation, PT := T#5S);
+P4M69 := Rung18_Timer.Q;
+
+(* Rung 19: XV4081 CIPA *)
+IF (XVM036 OR XVM034 OR XVM028 OR XVM031) AND _ALW_ON AND (WORD_TO_INT(R00437[0]) >= 10) THEN
+	XV4081 := TRUE;
+END_IF;
+
+(* Rung 20: XV4081 CIPA *)
+IF (NOT XVM036 AND NOT XVM034 AND NOT XVM028 AND NOT XVM031 AND NOT _ALW_OFF) OR (A3_STRT AND NOT A1_STRT AND NOT A2_STRT) THEN
+	XV4081 := FALSE;
+END_IF;
+
+(* Rung 21: M00304 *)
+M00304 := _ALW_ON AND A2_STRT AND (R09009 >= R00610);
+
+(* Rung 22: CIPR "A" TO WASTE *) 
+VAR 
+	_Rung22Help1 : BOOL;
+	_Rung22Help2 : BOOL;
+	_Rung22Help3 : BOOL;
+END_VAR
+_Rung22Help1 := (CANFILL AND NOT A_FILLS AND A_FULL AND A2_STRT) AND LSH3079 AND (LSH3068 OR NOT M02050) AND A2USE_S
+															   OR (LSH3068 AND M02050 AND NOT T4ACTIV)
+															   OR (LSH3076 AND A2USE_S);
+
+_Rung22Help2 := A3_STRT AND LSH3074;
+_Rung22Help3 := A1_STRT AND ((A_FULL AND A1USE_R) OR _ALW_ON) AND NOT A_STOP AND NOT A_END ;													   
+XVM011 := _Rung22Help1 OR _Rung22Help2 OR _Rung22Help3;								   
+															   
+
+(* Rung 23: CIPR "A" TO RETURN WATER TANK T *)
+XVM008 := (A_FULL OR _ALW_ON) AND NOT A_STOP AND NOT A_END) AND (A1_STRT AND NOT A1USE_R AND _ALW_OFF) OR (A3_STRT AND NOT LSH3074);
+
+(* Rung 24: CIPR "A" TO ASID TANK TO "OPEN" *)
+XVM002 := A2_STRT AND NOT A_STOP AND NOT A_END AND _ALW_ON AND A2USE_S AND T4ACTIV AND NOT LSH3079;
+XVM004 := A2_STRT AND NOT A_STOP AND NOT A_END AND _ALW_ON AND A2USE_S AND NOT T4ACTIV AND NOT LSH3068 AND M02050;
+XVM006 := A2_STRT AND NOT A_STOP AND NOT A_END AND _ALW_ON AND NOT A2USE_S;
+
+(* Rung 25: CIP A Stage 3 started *)
+IF A_END THEN
+	A_FILLS := FALSE;
+	A_FULL := FALSE;
+	A1_STRT := FALSE;
+	A2_STRT := FALSE;
+	A3_STRT := FALSE;
+END_IF;

@@ -1,0 +1,151 @@
+(*!
+@purpose
+This program (`D_DI.txt`) serves as the digital input mapping and latching layer for the "CIP D" process. Its primary and sole function is to read the state of the physical digital input terminals (`%I` addresses) and copy them to corresponding internal memory bits (`%M` addresses).
+
+This is a standard and crucial practice in PLC programming that provides a layer of abstraction between the physical hardware and the control logic. It makes the program more maintainable, easier to debug, and allows for simulation by manipulating the internal bits.
+
+@inputs
+- `I00281` through `I00304`: These are the physical digital input channels on the PLC's input modules. They represent the real-world status of field devices such as:
+    - Valve position feedback switches (e.g., `DI-4181-OP IN`, `DI-4181-CL IN`)
+    - Pump run status and overload/fault signals (e.g., `P-4169 RUN STATUS`, `P-4169 OVERLOAD`)
+    - Instrument fault signals (e.g., `FS-106 FAULT`)
+    - Pulse signals from flow meters (e.g., `FIT-107 PULSE`)
+
+@outputs
+- `XV*` and `P*` prefixed variables (`%M` addresses): These are the internal memory flags that mirror the state of the physical inputs. For example:
+    - `XV4108_O` will be TRUE if input `I00281` is TRUE.
+    - `P4169_Run` will be TRUE if input `I00295` is TRUE.
+    - `FIT_107_PLS` will be TRUE if input `I00296` is TRUE.
+These internal flags are then used by the rest of the control logic (e.g., in `D_GNACT.txt`, `D_ERROR.txt`).
+
+@notes
+- This code is for a GE/Emerson RX3i PLC and is written in Structured Text (ST).
+- The program contains no complex logic (like timers or counters), only direct one-to-one assignments.
+- This file must be kept perfectly synchronized with the physical wiring of the control panel. Any change in wiring to a different input terminal would require a corresponding change in this program.
+*)
+VAR_GLOBAL
+	I00281 AT %I00281 : BOOL; (*DI-4108 IN*)
+	I00282 AT %I00282 : BOOL; (*DI-4106 IN*)
+	I00283 AT %I00283 : BOOL; (*DI-4102 IN*)
+	I00284 AT %I00284 : BOOL; (*DI-4104 IN*)
+	I00285 AT %I00285 : BOOL; (*DI-4111 IN*)
+	I00286 AT %I00286 : BOOL; (*DI-4125 IN*)
+	I00287 AT %I00287 : BOOL; (*DI-4136 IN*)
+	I00288 AT %I00288 : BOOL; (*DI-4134 IN*)
+	I00289 AT %I00289 : BOOL; (*DI-4128 IN*)
+	I00290 AT %I00290 : BOOL; (*DI-4131 IN*)
+	I00291 AT %I00291 : BOOL; (*DI-4181-OP IN*)
+	I00292 AT %I00292 : BOOL; (*DI-4181-CL IN*)
+	I00293 AT %I00293 : BOOL; (*FS-106 FAULT*)
+	I00294 AT %I00294 : BOOL; (*P-4169 OVERLOAD*)
+	I00295 AT %I00295 : BOOL; (*P-4169 RUN STATUS*)
+	I00296 AT %I00296 : BOOL; (*FIT-107 PULSE*)
+	I00297 AT %I00297 : BOOL; (*SPARE*)
+	I00298 AT %I00298 : BOOL; (*SPARE*)
+	I00299 AT %I00299 : BOOL; (*SPARE*)
+	I00300 AT %I00300 : BOOL; (*SPARE*)
+	I00301 AT %I00301 : BOOL; (*SPARE*)
+	I00302 AT %I00302 : BOOL; (*SPARE*)
+	I00303 AT %I00303 : BOOL; (*SPARE*)
+	I00304 AT %I00304 : BOOL; (*SPARE*)
+	XV4108_O AT %M00541 : BOOL; (*XV-4108 OPEN COMMAND*)
+	XV4106_O AT %M00542 : BOOL; (*XV-4106 OPEN COMMAND*)
+	XV4102_O AT %M00543 : BOOL; (*XV-4102 OPEN COMMAND*)
+	XV4104_O AT %M00544 : BOOL; (*XV-4104 OPEN COMMAND*)
+	XV4111_O AT %M00545 : BOOL; (*XV-4111 OPEN COMMAND*)
+	XV4125_O AT %M00546 : BOOL; (*XV-4125 OPEN COMMAND*)
+	XV4136_O AT %M00547 : BOOL; (*XV-4136 OPEN COMMAND*)
+	XV4134_O AT %M00548 : BOOL; (*XV-4134 OPEN COMMAND*)
+	XV4128_O AT %M00549 : BOOL; (*XV-4128 OPEN COMMAND*)
+	XV4131_O AT %M00550 : BOOL; (*XV-4131 OPEN COMMAND*)
+	XV4181_O AT %M00551 : BOOL; (*XV-4181 OPEN COMMAND*)
+	FS_106 AT %M00553 : BOOL; (*FS-106 FAULT LATCH*)
+	P4169_OL AT %M00554 : BOOL; (*P-4169 OVERLOAD LATCH*)
+	P4169_Run AT %M00555 : BOOL; (*P-4169 RUN STATUS LATCH*)
+	FIT_107_PLS AT %M00556 : BOOL; (*FIT-107 PULSE LATCH*)
+	XV4181_C AT %M00571 : BOOL; (*XV-4181 CLOSE COMMAND*)
+END_VAR
+
+(* Rung 1: COMMENT0 *)
+
+(* Rung 2: COMMENT1 *)
+
+(* Rung 3: COMMENT2 *)
+
+(* Rung 4: XV-4108 OPEN COMMAND *)
+XV4108_O := I00281;
+
+(* Rung 5: COMMENT3 *)
+
+(* Rung 6: XV-4106 OPEN COMMAND *)
+XV4106_O := I00282;
+
+(* Rung 7: COMMENT4 *)
+
+(* Rung 8: XV-4102 OPEN COMMAND *)
+XV4102_O := I00283;
+
+(* Rung 9: COMMENT5 *)
+
+(* Rung 10: XV-4104 OPEN COMMAND *)
+XV4104_O := I00284;
+
+(* Rung 11: COMMENT6 *)
+
+(* Rung 12: XV-4111 OPEN COMMAND *)
+XV4111_O := I00285;
+
+(* Rung 13: COMMENT7 *)
+
+(* Rung 14: XV-4125 OPEN COMMAND *)
+XV4125_O := I00286;
+
+(* Rung 15: COMMENT8 *)
+
+(* Rung 16: XV-4136 OPEN COMMAND *)
+XV4136_O := I00287;
+
+(* Rung 17: COMMENT9 *)
+
+(* Rung 18: XV-4134 OPEN COMMAND *)
+XV4134_O := I00288;
+
+(* Rung 19: COMMENT10 *)
+
+(* Rung 20: XV-4128 OPEN COMMAND *)
+XV4128_O := I00289;
+
+(* Rung 21: COMMENT11 *)
+
+(* Rung 22: XV-4131 OPEN COMMAND *)
+XV4131_O := I00290;
+
+(* Rung 23: COMMENT12 *)
+
+(* Rung 24: XV-4181 OPEN COMMAND *)
+XV4181_O := I00291;
+
+(* Rung 25: COMMENT13 *)
+
+(* Rung 26: XV-4181 CLOSE COMMAND *)
+XV4181_C := I00292;
+
+(* Rung 27: COMMENT14 *)
+
+(* Rung 28: FS-106 FAULT LATCH *)
+FS_106 := I00293;
+
+(* Rung 29: COMMENT15 *)
+
+(* Rung 30: P-4169 OVERLOAD LATCH *)
+P4169_OL := I00294;
+
+(* Rung 31: COMMENT16 *)
+
+(* Rung 32: P-4169 RUN STATUS LATCH *)
+P4169_Run := I00295;
+
+(* Rung 33: COMMENT17 *)
+
+(* Rung 34: FIT-107 PULSE LATCH *)
+FIT_107_PLS := I00296;

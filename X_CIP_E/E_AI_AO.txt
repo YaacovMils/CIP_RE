@@ -1,0 +1,73 @@
+(*!
+@purpose
+This program (`E_AI_AO.txt`) is the dedicated analog signal processing block for the "CIP E" process. It handles both the scaling of analog inputs from field instruments and the un-scaling of analog outputs to control devices. It is the functional equivalent of `D_AI.txt` and `D_AQ.txt` combined into a single file.
+
+The program's responsibilities are:
+1.  **Analog Input Scaling:** To convert the raw integer values (0-32000) from the PLC's analog input modules into meaningful, floating-point engineering units. It handles signals for flow, conductivity, and temperature.
+2.  **Analog Output Scaling:** To take a desired pump speed, provided as a percentage (0-100.0), and convert it back into the raw integer value (0-32000) required by the analog output module to control the pump's speed.
+
+@inputs
+- `AI0022`, `AI0023`, `AI0024` (INT): Raw integer values from the analog input card, representing flow, conductivity, and temperature.
+- `P4269_SC` (REAL): The desired speed for the CIP E pump (P4269), provided as a REAL number from 0.0 to 100.0.
+
+@outputs
+- `FIT207_Eu` (REAL): The calculated flow rate in engineering units (e.g., m³/h).
+- `CIT2110_Eu` (REAL): The calculated conductivity in engineering units (e.g., mS).
+- `TIT207_Eu` (REAL): The calculated temperature in engineering units (e.g., °C).
+- `AQ0003` (INT): The raw integer value sent to the analog output module to control the speed of pump P4269.
+
+@notes
+- This code is for a GE/Emerson RX3i PLC and is written in Structured Text (ST).
+- The original comments are in Hebrew, with "כניסה אנלוגית" meaning "Analog Input" and "יציאה אנלוגית" meaning "Analog Output".
+- Consolidating all analog I/O for a specific process line into one file is a clean and organized approach to managing signal scaling.
+*)
+VAR_GLOBAL
+	AI0022 AT %AI0022 : INT; (*כניסה אנלוגית*)
+	AI0023 AT %AI0023 : INT; (*כניסה אנלוגית*)
+	AI0024 AT %AI0024 : INT; (*כניסה אנלוגית*)
+	AQ0003 AT %AQ0002 : INT; (*יציאה אנלוגית*)
+	AI_E_General AT %R09230 : REAL; (*עזר להמרה AI*)
+	AQ_E_General01 AT %R09232 : REAL; (**)
+	FIT207_Eu AT %R09221 : REAL; (*ספיקה בקיטור CIP_E*)
+	CIT2110_Eu AT %R09223 : REAL; (*מוליכות בקיטור CIP_E*)
+	TIT207_Eu AT %R09225 : REAL; (*טמפרטורה בקיטור CIP_E*)
+	P4269_SC AT %R09160 : REAL; (*בקרת מהירות משאבה P4269*)
+END_VAR
+
+(* Rung 1: FIT-207       CIP_E Flow      0-100.0m3/h *)
+
+(* Rung 2:  *)
+AI_E_General := INT_TO_REAL(AI0022);
+
+(* Rung 3:  *)
+FIT207_Eu := (AI_E_General * 50.0) / 32000.0;
+
+(* Rung 4: CIT-2110      CIP_E Conductivty   0-100 mS *)
+
+(* Rung 5:  *)
+AI_E_General := INT_TO_REAL(AI0023);
+
+(* Rung 6:  *)
+CIT2110_Eu := (AI_E_General * 200.0) / 32000.0;
+
+(* Rung 7: TIT-207       CIP_E Temperature  Return *)
+
+(* Rung 8: עזר להמרה AI *)
+AI_E_General := INT_TO_REAL(AI0024) * 150.0;
+
+(* Rung 9: *)
+TIT207_Eu := AI_E_General / 32000.0;
+
+(* Rung 10: AQ *)
+
+(* Rung 11:  *)
+AQ_E_General01 := P4269_SC;
+
+(* Rung 12:  *)
+AQ_E_General01 := AQ_E_General01 * 32000.0;
+
+(* Rung 13:  *)
+AQ_E_General01 := AQ_E_General01 / 100.0;
+
+(* Rung 14: יציאה אנלוגית *)
+AQ0003 := REAL_TO_INT(AQ_E_General01);

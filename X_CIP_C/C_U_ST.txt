@@ -1,0 +1,244 @@
+(*!
+@purpose
+This program (`C_U_ST.txt`) is responsible for creating a comprehensive status word for the Cleaning-in-Place (CIP) C-line process. Similar to its A-line and B-line counterparts, it aggregates many individual boolean flags into a single integer (`C_STAT`). This provides a compact and efficient method for communicating the complete state of the Line C process and its related subsystems to an HMI or SCADA.
+
+This status word is more comprehensive than those for lines A and B. In addition to the standard CIP line states, it also includes status bits from supporting systems, such as the main chemical tanks and the barrel washing process, reflecting the central role of Line C.
+
+@inputs
+- `C1_STRT` (BOOL), `C2_STRT` (BOOL), `C3_STRT` (BOOL): Flags for the currently active CIP stage.
+- `C_STOP` (BOOL), `C_ALARM` (BOOL), `C_END` (BOOL): The primary status flags for the Line C process.
+- `C_FILLS` (BOOL), `C_FULL` (BOOL): Flags indicating the filling status.
+- `BR2USES` (BOOL), `BRL_ALR` (BOOL): Status flags from the `BARRELS.txt` program.
+- `T3_ALR` (BOOL), `T45_ALR` (BOOL): Alarm flags from the acid and soda tank systems.
+- `T3_STP` (BOOL), `T45_STP` (BOOL): Stopped flags from the acid and soda tank systems.
+- `STOPALL` (BOOL): The global "Stop All" flag.
+
+@outputs
+- `C_STAT` (%R09049) (WORD): The final, consolidated status integer. All write operations to this register occur in this file (`C_U_ST.txt`). The word is constructed by setting individual bits based on various process flags. The final value from the temporary register `AUX1[0]` is moved to `C_STAT` in Rung 17.
+
+    - **Bits 0-3 (Value 1-15): Active Stage**
+        - Set to `1` if `C1_STRT` is TRUE (Rung 2).
+        - Set to `2` if `C2_STRT` is TRUE (Rung 3).
+        - Set to `3` if `C3_STRT` is TRUE (Rung 4).
+        - The lower 4 bits are cleared at the start of each scan (Rung 1).
+
+    - **Bit 5 (Value 16): CIP C Stopped**
+        - Set if `C_STOP` is TRUE (Rung 5).
+
+    - **Bit 6 (Value 32): CIP C Ended (C_END)**
+        - Set if `C_END` is TRUE (Rung 7). This flag indicates the sequence is complete.
+
+    - **Bit 7 (Value 64): CIP C Ready / Idle (C_READY)**
+        - This bit indicates the system is ready for a new command. It is set when the line is not in the middle of a filling operation, not already full, not running a stage, and not at the end of a sequence.
+        - Condition: `NOT C_FILLS AND NOT C_FULL AND NOT C1_STRT AND NOT C_END` (Rung 8).
+
+    - **Bit 8 (Value 128): CIP C Alarm**
+        - Set if `C_ALARM` is TRUE (Rung 6).
+
+    - **Bit 9 (Value 256): Barrel Wash Soda Usage**
+        - Set if `BR2USES` is TRUE (Rung 10).
+
+    - **Bit 10 (Value 512): Barrel System Alarm**
+        - Set if `BRL_ALR` is TRUE (Rung 11).
+
+    - **Bit 11 (Value 1024): Soda Tank (T4/T5) System Alarm**
+        - Set if `T45_ALR` is TRUE (Rung 15).
+
+    - **Bit 12 (Value 2048): Acid Tank (T3) System Alarm**
+        - Set if `T3_ALR` is TRUE (Rung 14).
+
+    - **Bit 13 (Value 4096): Acid Tank (T3) System Stopped**
+        - Set if `T3_STP` is TRUE (Rung 13).
+
+    - **Bit 14 (Value 8192): Soda Tank (T4/T5) System Stopped**
+        - Set if `T45_STP` is TRUE (Rung 12).
+
+    - **Bit 15 (Value 16384): Global Stop All**
+        - Set if `STOPALL` is active (Rung 16).
+
+@notes
+- This code is for a GE/Emerson RX3i PLC and is written in Structured Text (ST).
+- The use of bitwise OR operations (`OR 16`, `OR 128`, etc.) is a standard and efficient method for building status words in PLC programming.
+- The inclusion of status bits from multiple other programs makes this a key top-level status indicator for the entire CIP system.
+*)
+VAR_GLOBAL
+	AUX1 AT %R00102 : ARRAY [0..4] OF WORD; (* Temp register 1 *)
+	BR2USES AT %M00189 : BOOL; (* Barrel CIP uses soda on stage 2. *)
+	BRL_ALR AT %M00176 : BOOL; (* Barrel in alarm state. *)
+	C1_STRT AT %M00157 : BOOL; (* CIP C stage 1 started *)
+	C2_STRT AT %M00158 : BOOL; (* CIP C stage 2 started *)
+	C3_STRT AT %M00159 : BOOL; (* CIP C Stage 3 started *)
+	C_ALARM AT %M00172 : BOOL; (* CIP C in alarm state. *)
+	C_END AT %M00156 : BOOL; (* CIP C ended *)
+	C_FILLS AT %M00162 : BOOL; (* CIP C fills reactor *)
+	C_FULL AT %M00160 : BOOL; (* CIP C-reactor was filled *)
+	C_STAT AT %R09049 : WORD; (* CIP C Status *)
+	C_STOP AT %M00155 : BOOL; (* CIP C stopped *)
+	STOPALL AT %M00104 : BOOL; (* Stop all processes *)
+	T3_ALR AT %M00174 : BOOL; (* Tank 3 in alarm state. *)
+	T3_STP AT %M00181 : BOOL; (* Tank 3 stopped *)
+	T45_ALR AT %M00175 : BOOL; (* Tanks 4,5 in alarm state. *)
+	T45_STP AT %M00182 : BOOL; (* Tanks 4,5 stopped HMI *)
+END_VAR
+
+(* Rung 1: *)
+(*
+* Block Instruction Analysis: AND_WORD
+* This instruction performs a bitwise AND operation. It will AND the value
+* of B_STAT with the constant 15 (binary 0000_0000_0000_1111) and store the
+* result in AUX1[0]. This effectively isolates the lower 4 bits of B_STAT.
+*)
+AUX1[0] := C_STAT AND 15;
+
+(* Rung 2: *)
+IF C1_STRT THEN
+	AUX1[0] := 1;
+END_IF;
+
+(* Rung 3: *)
+IF C2_STRT THEN
+	AUX1[0] := 2;
+END_IF;
+
+(* Rung 4: *)
+IF C3_STRT THEN
+	AUX1[0] := 3;
+END_IF;
+
+(* Rung 5: *)
+(*
+* Block Instruction Analysis: BIT_SET_WORD
+* This instruction sets a specific bit within the target WORD variable to 1.
+* Target Variable: AUX1[0]
+* Bit to Set: 5 (This corresponds to a value of 2^(5-1) = 16).
+* The ST equivalent uses a bitwise OR operation.
+*)
+IF C_STOP THEN
+	AUX1[0] := AUX1[0] OR 16;
+END_IF;
+
+(* Rung 6: *)
+(*
+* Block Instruction Analysis: BIT_SET_WORD
+* This instruction sets a specific bit within the target WORD variable to 1.
+* Target Variable: AUX1[0]
+* Bit to Set: 8 (This corresponds to a value of 2^(8-1) = 128).
+* The ST equivalent uses a bitwise OR operation.
+*)
+IF C_ALARM THEN
+	AUX1[0] := AUX1[0] OR 128;
+END_IF;
+
+(* Rung 7: *)
+(*
+* Block Instruction Analysis: BIT_SET_WORD
+* This instruction sets a specific bit within the target WORD variable to 1.
+* Target Variable: AUX1[0]
+* Bit to Set: 6 (This corresponds to a value of 2^(6-1) = 32).
+* The ST equivalent uses a bitwise OR operation.
+*)
+IF C_END THEN
+	AUX1[0] := AUX1[0] OR 32;
+END_IF;
+
+(* Rung 8: *)
+(*
+* Block Instruction Analysis: BIT_SET_WORD
+* This instruction sets a specific bit within the target WORD variable to 1.
+* Target Variable: AUX1[0]
+* Bit to Set: 7 (This corresponds to a value of 2^(7-1) = 64).
+* The ST equivalent uses a bitwise OR operation.
+*)
+IF NOT C_FILLS AND NOT C_FULL AND NOT C1_STRT AND NOT C_END THEN
+	AUX1[0] := AUX1[0] OR 64;
+END_IF;
+
+(* Rung 9: COMMENT0 *)
+
+(* Rung 10: Temp register 1 *)
+(*
+* Block Instruction Analysis: BIT_SET_WORD
+* This instruction sets a specific bit within the target WORD variable to 1.
+* Target Variable: AUX1[0]
+* Bit to Set: 9 (This corresponds to a value of 2^(9-1) = 256).
+* The ST equivalent uses a bitwise OR operation.
+*)
+IF BR2USES THEN
+	AUX1[0] := AUX1[0] OR 256;
+END_IF;
+
+(* Rung 11: Temp register 1 *)
+(*
+* Block Instruction Analysis: BIT_SET_WORD
+* This instruction sets a specific bit within the target WORD variable to 1.
+* Target Variable: AUX1[0]
+* Bit to Set: 10 (This corresponds to a value of 2^(10-1) = 512).
+* The ST equivalent uses a bitwise OR operation.
+*)
+IF BRL_ALR THEN
+	AUX1[0] := AUX1[0] OR 512;
+END_IF;
+
+(* Rung 12: Temp register 1 *)
+(*
+(*
+* Block Instruction Analysis: BIT_SET_WORD
+* This instruction sets a specific bit within the target WORD variable to 1.
+* Target Variable: AUX1[0]
+* Bit to Set: 14 (This corresponds to a value of 2^(14-1) = 8192).
+* The ST equivalent uses a bitwise OR operation.
+*)
+IF T45_STP THEN
+	AUX1[0] := AUX1[0] OR 8192;
+END_IF;
+
+(* Rung 13: Temp register 1 *)
+(*
+* Block Instruction Analysis: BIT_SET_WORD
+* This instruction sets a specific bit within the target WORD variable to 1.
+* Target Variable: AUX1[0]
+* Bit to Set: 13 (This corresponds to a value of 2^(13-1) = 4096).
+* The ST equivalent uses a bitwise OR operation.
+*)
+IF T3_STP THEN
+	AUX1[0] := AUX1[0] OR 4096;
+END_IF;
+
+(* Rung 14: Temp register 1 *)
+(*
+* Block Instruction Analysis: BIT_SET_WORD
+* This instruction sets a specific bit within the target WORD variable to 1.
+* Target Variable: AUX1[0]
+* Bit to Set: 12 (This corresponds to a value of 2^(12-1) = 2048).
+* The ST equivalent uses a bitwise OR operation.
+*)
+IF T3_ALR THEN
+	AUX1[0] := AUX1[0] OR 2048;
+END_IF;
+
+(* Rung 15: Temp register 1 *)
+(*
+* Block Instruction Analysis: BIT_SET_WORD
+* This instruction sets a specific bit within the target WORD variable to 1.
+* Target Variable: AUX1[0]
+* Bit to Set: 11 (This corresponds to a value of 2^(11-1) = 1024).
+* The ST equivalent uses a bitwise OR operation.
+*)
+IF T45_ALR THEN
+	AUX1[0] := AUX1[0] OR 1024;
+END_IF;
+
+(* Rung 16: Temp register 1 *)
+(*
+* Block Instruction Analysis: BIT_SET_WORD
+* This instruction sets a specific bit within the target WORD variable to 1.
+* Target Variable: AUX1[0]
+* Bit to Set: 15(This corresponds to a value of 2^(15-1) = 16384).
+* The ST equivalent uses a bitwise OR operation.
+*)
+IF STOPALL THEN
+	AUX1[0] := AUX1[0] OR 16384;
+END_IF;
+
+(* Rung 17: CIP C Status *)
+C_STAT := AUX1[0];

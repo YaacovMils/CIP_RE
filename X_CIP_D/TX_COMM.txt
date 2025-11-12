@@ -1,0 +1,150 @@
+(*
+* @purpose: Handles outgoing EGD (Ethernet Global Data) communication to an external controller (R20).
+*           This file gathers key status information from the CIP "D" sequence, such as the current step,
+*           monitoring timers, and status bits (faults, state), and packs them into WORD registers for transmission.
+* @platform: GE/Emerson RX3i PLC
+* @language: Structured Text (ST)
+*
+* @inputs:
+*   D_Steper (%R09101) (INT): The current step number of the main "D" CIP sequence.
+*   MonitorAct (%R09104) (INT): The actual elapsed time (in tenths of a second) for the current step timer.
+*   MonitorPre (%R09105) (INT): The preset time for the current step timer.
+*   D_Farm_FLT (%M00640) (BOOL): The master fault bit for the "D" farm area.
+*   CIP_Ended (%M0327) (BOOL): Flag indicating the CIP sequence has completed.
+*   CIP_D_FarmeCondition (%M00320) (BOOL): Flag indicating that the "D" farm is in a valid condition to run.
+*   CIP_Rinsing (%M00351) (BOOL): Flag indicating the rinsing phase of the CIP process is active.
+*   #T_SEC (%S00005) (BOOL): A system clock bit that pulses once per second, used here as a communication heartbeat.
+*
+* @outputs:
+*   Tx_D_Step (%R09500) (WORD): The current CIP "D" sequence step number, prepared for EGD transmission.
+*   Tx_MonitorAct (%R09501) (WORD): The elapsed step time, prepared for EGD transmission.
+*   Tx_MonitorPre (%R09502) (WORD): The preset step time, prepared for EGD transmission.
+*   Tx_Word_Bits (%R09503) (WORD): A packed 16-bit register containing various status bits for EGD transmission.
+*	BITS:   0,D_Farm_FLT (%M00640) (BOOL): The master fault bit for the "D" farm area.
+*			2,CIP_Ended (%M0327) (BOOL): Flag indicating the CIP sequence has completed.
+*			3,CIP_D_FarmeCondition (%M00320) (BOOL): Flag indicating that the "D" farm is in a valid condition to run.
+*			4,#T_SEC (%S00005) (BOOL): A system clock bit that pulses once per second, used here as a communication heartbeat.
+*			5,CIP_Rinsing (%M00351) (BOOL): Flag indicating the rinsing phase of the CIP process is active.
+*
+* @notes: The logic packs several key boolean tags into the Tx_Bit array, which is then moved into the single
+*         Tx_Word_Bits register. The block of assignments from R09504 to R09518 appears to be intended to
+*         send a large block of %M memory addresses, though the source tags are commented out with invalid syntax (`M793//`).
+*)
+VAR_GLOBAL
+	(* 1.0 second timer contact *)
+	#T_SEC AT %S00005 : BOOL;
+
+	(* CIP D Condition *)
+	CIP_D_FarmeCondition AT %M00320 : BOOL;
+
+	(* Line D *)
+	CIP_Ended AT %M00327 : BOOL;
+
+	(* Line D *)
+	CIP_Rinsing AT %M00351 : BOOL;
+
+	(* General Fault CIP D *)
+	D_Farm_FLT AT %M00640 : BOOL;
+
+	(* Line D Struct *)
+	D_Steper AT %R09101 : INT;
+
+	M00778 AT %M00778 : BOOL;
+	M00779 AT %M00779 : BOOL;
+	M00780 AT %M00780 : BOOL;
+	M00781 AT %M00781 : BOOL;
+
+	(* Setp_Time_Actual Count *)
+	MonitorAct AT %R09104 : INT;
+
+	(* Monitoring Preset Time *)
+	MonitorPre AT %R09105 : INT;
+
+	Tx_Bit AT %M00777 : ARRAY [0..16] OF BOOL;
+
+	(* Signal To R20 *)
+	Tx_D_Step AT %R09500 : WORD;
+
+	(* Signal To R20 *)
+	Tx_MonitorAct AT %R09501 : WORD;
+
+	(* Signal To R20 *)
+	Tx_MonitorPre AT %R09502 : WORD;
+
+	(* Signal To R20 *)
+	Tx_Word_Bits AT %R09503 : WORD;
+	R09504 AT %R09504 : WORD;
+	R09505 AT %R09505 : WORD;
+	R09506 AT %R09506 : WORD;
+	R09507 AT %R09507 : WORD;
+	R09508 AT %R09508 : WORD;
+	R09509 AT %R09509 : WORD;
+	R09510 AT %R09510 : WORD;
+	R09511 AT %R09511 : WORD;
+	R09512 AT %R09512 : WORD;
+	R09513 AT %R09513 : WORD;
+	R09514 AT %R09514 : WORD;
+	R09515 AT %R09515 : WORD;
+	R09516 AT %R09516 : WORD;
+	R09517 AT %R09517 : WORD;
+	R09518 AT %R09518 : WORD;
+
+	
+END_VAR
+
+VAR
+    i : INT;
+END_VAR
+
+
+(*
+ * Rung 1: **********************************************
+ * Tx   R20
+ * **********************************************
+*)
+
+(* Rung 2: Signal To R20 *)
+
+Tx_D_Step := INT_TO_WORD(D_Steper);
+
+(* Rung 3: Signal To R20 *)
+Tx_MonitorAct := INT_TO_WORD(MonitorAct);
+
+(* Rung 4: Signal To R20 *)
+Tx_MonitorPre := INT_TO_WORD(MonitorPre);
+
+(* Rung 5: COMMENT3 *)
+
+(* Rung 6 *)
+Tx_Bit[0] := D_Farm_FLT;
+
+(* Rung 7 *)
+M00778 := CIP_Ended;
+
+(* Rung 8 *)
+M00779 := CIP_D_FarmeCondition;
+
+(* Rung 9 *)
+M00780 := #T_SEC;
+
+(* Rung 10 *)
+M00781 := CIP_Rinsing;
+
+(* Rung 11: Signal To R20 *)
+Tx_Word_Bits := Tx_Bit; //this pass 16 words of bits
+R09504 := M793// up to M809
+R09505 := M809// up to M825
+R09506 := M825// up to M841
+R09507 := M841// up to M857
+R09508 := M857// up to M873
+R09509 := M873// up to M889
+R09510 := M889// up to M905
+R09511 := M905// up to M921
+R09512 := M921// up to M937
+R09513 := M937// up to M953
+R09514 := M953// up to M969
+R09515 := M969// up to M985
+R09516 := M985// up to M1001
+R09517 := M1001// up to M1017
+R09518 := M1017// up to M1033
+

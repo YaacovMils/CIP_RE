@@ -1,0 +1,58 @@
+(*
+* @purpose: Handles specific HMI commands related to the "C" CIP unit.
+*           This program is responsible for interpreting commands from the MMI to stop the "C"
+*           unit's automatic sequence and to reset its associated alarms.
+* @platform: GE/Emerson RX3i PLC
+* @language: Structured Text (ST)
+*
+* @inputs:
+*   R00536[62] (INT) (aliased as MMICMD): The command code received from the HMI.
+*     - Command `46`: Stop CIP Mode.
+*     - Commands `48`, `49`: Reset Alarms.
+*   PB3091 (%I00091) (BOOL): Physical acknowledge pushbutton input.
+*   STR_SCR (%G00227) (BOOL): Internal flag to navigate to the start screen.
+*   PB_Start_CIP (%M01121) (BOOL): Physical start pushbutton input for CIP.
+*
+* @outputs:
+*   C_ALARM (%M00172) (BOOL): Resets the general alarm for the "C" unit.
+*   CMMISTP (%M00163) (BOOL): Sets or resets the flag to stop the "C" unit's automatic sequence.
+*
+* @notes: This program is called by MMI0CMD.txt whenever a new command is detected. It processes
+*         commands relevant to the "C" unit and also resets alarms based on physical pushbutton inputs.
+*)
+VAR_GLOBAL
+    (* CIP Mode Selected when another mode is selected *)
+    C_ALARM AT %M00172 : BOOL;
+
+    (* Stop CIP Mode *)
+    CMMISTP AT %M00163 : BOOL;
+
+    (* Pushbutton To Start CIP *)
+    PB_Start_CIP AT %M01121 : BOOL;
+
+    (* Acknowledge Pushbutton *)
+    PB3091 AT %I00091 : BOOL;
+
+    (* Base array for MMI commands. Element [62] is aliased as MMICMD: MMI command(hnds,b4activ,etc) *)
+    R00536 AT %R00536 : ARRAY[0..64] OF WORD;
+
+    (* Go To Start Screen *)
+    STR_SCR AT %G00227 : BOOL;
+END_VAR
+
+(* Rung 1: COMMENT0 *)
+
+(* Rung 2: CIP Mode Selected when another mode is selected *)
+IF PB3091 OR STR_SCR OR (NOT CMMISTP) OR PB_Start_CIP THEN
+    C_ALARM := FALSE;
+END_IF;
+
+(* Rung 3: Stop CIP Mode *)
+IF (R00536[62] >= 48 AND R00536[62] <= 49) THEN
+    CMMISTP := FALSE;
+END_IF;
+
+(* Rung 4: Stop CIP Mode *)
+IF R00536[62] = 46 THEN
+    CMMISTP := TRUE;
+END_IF;

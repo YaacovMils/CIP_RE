@@ -1,0 +1,39 @@
+(*!
+@purpose
+This program (`T2_RWTR.txt`) contains the dedicated control logic for the Recovery Water Tank (Tank 2). Its main role is to monitor the tank's level and provide status flags that are used as interlocks by the main CIP processes.
+
+Unlike the fresh water tank, this program does not appear to directly control a fill valve. Instead, it assumes the tank is filled passively by the return flow from CIP rinse stages. Its primary functions are:
+1.  **Status Monitoring:** It monitors the high (`HILVL2`) and low (`LOLVL2`) level switches. It sets a "filling" flag (`T2_FLNG`) when the water level is above the low-level switch and keeps it on until the high-level switch is reached.
+2.  **Interlock Generation:** It generates a `T2_BUSY` signal whenever the tank is considered to be in a filling state. This is a critical interlock used by the CIP pre-rinse stages to determine if recovery water is available for use.
+
+@inputs
+- `HILVL2`, `LOLVL2`: The debounced status of the high and low-level switches for the Recovery Water Tank.
+
+@outputs
+- `T2_BUSY` (%M00123): A boolean flag that is TRUE when the tank is not empty, indicating to other processes that it is either full or in the process of being filled.
+- `T2_FLNG` (%M00193): A status flag indicating that the tank is currently being filled (i.e., the water level is between the low and high setpoints).
+
+@notes
+- This code is for a GE/Emerson RX3i PLC and is written in Structured Text (ST).
+- The logic for `T2_FLNG` is a classic "latching" or "seal-in" logic: the condition `NOT LOLVL2` starts the process, and `T2_FLNG` holds itself on until the `NOT HILVL2` condition becomes false (i.e., when `HILVL2` becomes true).
+- A rung of debug logic is commented out, which suggests a potential (but currently disabled) feature to automatically drain the tank if it becomes overfilled.
+*)
+VAR_GLOBAL
+	ENDALL AT %M00105 : BOOL; (* End all processes *)
+	HILVL2 AT %M00116 : BOOL; (* High level Rec water *)
+	LOLVL2 AT %M00117 : BOOL; (* Low level Rec water *)
+	STOPALL AT %M00104 : BOOL; (* Stop all processes *)
+	T2_BUSY AT %M00123 : BOOL; (* Recovery water tank busy *)
+	T2_FLNG AT %M00193 : BOOL; (* Recovery water tank filling watr *)
+	XVM053 AT %M00053 : BOOL; (* FROM WATER RECOVERY TANK TO WAS *)
+	_Bit : BOOL; (* Temporary bit for Rung 3 debug state view *)
+END_VAR
+
+(* Rung 1: Recovery water tank filling watr *)
+T2_FLNG := (NOT LOLVL2) OR (T2_FLNG AND NOT HILVL2);
+
+(* Rung 2: Recovery water tank busy *)
+T2_BUSY := T2_FLNG;
+
+(* Rung 3: DEBUG: View current state *)
+(* _Bit := (NOT STOPALL) AND (NOT ENDALL) AND HILVL2 AND XVM053; *)

@@ -1,0 +1,155 @@
+(*!
+@purpose
+This program (`A_CMD.txt`) functions as the central command decoder for the Cleaning-In-Place (CIP) sequence for Line A. It receives a single integer command, typically from an HMI or a master sequencing program, and translates it into individual boolean start/stop flags for the different stages of the cleaning process.
+
+Its primary responsibilities are:
+1.  **Command Interpretation:** It decodes the `CIPACMD` integer to determine which action to take (e.g., start stage 1, start stage 2 with soda, end the sequence).
+2.  **Reactor Number Extraction:** It parses the `CIPACMD` variable, using bitwise operations to separate the low-byte command from the high-byte reactor number.
+3.  **State Control:** It sets and resets the state flags (`A1_STRT`, `A2_STRT`, `A3_STRT`) based on the received command, ensuring that stages are initiated correctly.
+4.  **Stop and End Logic:** It consolidates multiple system-level stop conditions (global stop, alarms, HMI stop) into a single `A_STOP` flag for the Line A logic.
+
+@inputs
+- `CIPACMD` (INT): A composite integer command. The lower 8 bits represent the command code (1-7), and the upper 8 bits represent the target reactor number.
+- `STOPALL` (BOOL): A global command to stop all CIP processes.
+- `A_ALARM` (BOOL): A flag indicating an active alarm condition for Line A.
+- `AMMISTP` (BOOL): A stop command initiated from the HMI/MMI.
+- `ENDALL` (BOOL): A global command to end all CIP processes.
+- `M00206` (BOOL): Interlock conditions, possibly related to chemical availability or path readiness.
+- `M00207` (BOOL): Interlock conditions, possibly related to chemical availability or path readiness.
+
+@outputs
+- `A_REAC_num_` (INT): The extracted reactor number for the current CIP A sequence.
+- `A1_STRT` (BOOL): A flag to start Stage 1 (pre-rinse).
+- `A2_STRT` (BOOL): A flag to start Stage 2 (chemical wash).
+- `A3_STRT` (BOOL): A flag to start Stage 3 (final rinse).
+- `A2USE_S` (BOOL): A boolean flag to select the chemical for Stage 2 (TRUE for soda, FALSE for acid).
+- `A_STOP` (BOOL): A consolidated flag indicating that the Line A sequence should be stopped.
+- `A_END` (BOOL): A flag indicating the successful completion or forced end of the Line A sequence.
+- `FQCAQTY` (INT): Resets the totalized flow counter to zero at the beginning of a new stage.
+
+@notes
+- This code is for a GE/Emerson RX3i PLC and is written in Structured Text (ST).
+- The logic prevents multiple stages from being active simultaneously by checking the status of other stage flags before starting a new one.
+- This program acts as a crucial interface between high-level commands and the detailed execution logic found in other files like `A_CIP.txt`.
+*)
+VAR_GLOBAL
+	#ALW_ON AT %S00007 : BOOL; (* Always ON *)
+	A1_STRT AT %M00132 : BOOL; (* CIP A stage 1 started *)
+	A1USE_R AT %M00137 : BOOL; (* CIP A stage 1 use recov. water *)
+	A2_STRT AT %M00133 : BOOL; (* CIP A stage 2 started *)
+	A2USE_S AT %M00136 : BOOL; (* CIP A stage 2 use soda *)
+	A3_STRT AT %M00134 : BOOL; (* CIP A Stage 3 started *)
+	A_ALARM AT %M00170 : BOOL; (* CIP A in alarm state. *)
+	A_END AT %M00131 : BOOL; (* CIP A ended and/or stage 3 ended *)
+	A_REAC_num_ AT %R00130 : INT; (* Current Reactor number for CIP A *)
+	A_STOP AT %M00130 : BOOL; (* CIP A stopped *)
+	AMMISTP AT %M00138 : BOOL; (* CIP A Stopped from MMI *)
+	CIPACMD AT %R00536[51] : INT; (* CIP A command (0,1,2,3,4,5,6) *)
+	ENDALL AT %M00105 : BOOL; (* End all processes *)
+	FQCAQTY AT %R09013 : INT; (* FQC A quantity (+genius send) *)
+	M00206 AT %M00206 : BOOL; (* HMI CMD EQ 555 *)
+	M00207 AT %M00207 : BOOL; (* HMI CMD EQ 777 *)
+	M00299 AT %M00299 : BOOL; (* *)
+	R09060 AT %R09060 : INT; (* *)
+	STOPALL AT %M00104 : BOOL; (* Stop all processes *)
+END_VAR
+
+(* Rung 1: COMMENT0 *)
+
+(* Rung 2: Current Reactor number for CIP A *)
+IF CIPACMD > 255 THEN
+    A_REAC_num_ := CIPACMD AND 65280;
+    CIPACMD := CIPACMD AND 255;
+END_IF;
+
+(* Rung 3: COMMENT1 *)
+
+(* Rung 4: Command start stage 1 *)
+CMD_S1 := (CIPACMD = 1);
+
+(* Rung 5: Command Start stage 2 with SODA *)
+CMD_S2S := #ALW_ON AND M00207 AND (CIPACMD = 2);
+
+(* Rung 6: Command Start stage 2 with acid *)
+CMD_S2A := #ALW_ON AND M00206 AND (CIPACMD = 3);
+
+(* Rung 7: Command Start stage 3 *)
+CMD_S3 := (CIPACMD = 4);
+
+(* Rung 8: Command End CIP A and/or stage 3 *)
+CMD_END := (CIPACMD = 7);
+
+(* Rung 9: CIP A stage 1 started *)
+IF CIPACMD <> 1 THEN
+    A1_STRT := FALSE;
+END_IF;
+
+(* Rung 10: CIP A stage 2 started *)
+IF #ALW_ON AND A2USE_S AND (CIPACMD <> 2) THEN
+    A2_STRT := FALSE;
+END_IF;
+
+(* Rung 11: CIP A stage 2 started *)
+IF #ALW_ON AND (NOT A2USE_S) AND (CIPACMD <> 3) THEN
+    A2_STRT := FALSE;
+END_IF;
+
+(* Rung 12: CIP A Stage 3 started *)
+IF CIPACMD <> 4 THEN
+    A3_STRT := FALSE;
+END_IF;
+
+(* Rung 13: COMMENT2 *)
+
+(* Rung 14: FQC A quantity (+genius send) *)
+IF (CMD_S3 OR CMD_S2S OR CMD_S2A OR CMD_S1) AND (NOT A3_STRT) AND (NOT A2_STRT) AND (NOT A1_STRT) AND (NOT A_STOP) THEN
+    FQCAQTY := 0;
+    A_END := FALSE;
+END_IF;
+
+(* Rung 15: COMMENT3 *)
+
+(* Rung 16: CIP A stage 1 started *)
+IF CMD_S1 AND (NOT A1_STRT) AND (NOT A2_STRT) AND (NOT A3_STRT) AND (NOT A_STOP) THEN
+    A1_STRT := TRUE;
+    A1USE_R := FALSE;
+END_IF;
+
+(* Rung 17: COMMENT4 *)
+
+(* Rung 18: CIP A stage 2 started *)
+IF (NOT A1_STRT) AND (NOT A2_STRT) AND (NOT A3_STRT) AND (NOT A_STOP) THEN
+    IF CMD_S2S OR CMD_S2A THEN
+        A2_STRT := TRUE;
+    END_IF;
+    
+    IF CMD_S2S THEN
+        A2USE_S := TRUE;
+    ELSIF CMD_S2A THEN
+        A2USE_S := FALSE;
+    END_IF;
+END_IF;
+
+(* Rung 19: COMMENT5 *)
+
+(* Rung 20: CIP A Stage 3 started *)
+IF CMD_S3 AND (NOT A3_STRT) AND (NOT A2_STRT) AND (NOT A1_STRT) AND (NOT A_STOP) THEN
+    A3_STRT := TRUE;
+END_IF;
+
+(* Rung 21: CIP A stopped *)
+A_STOP := (STOPALL OR A_ALARM OR AMMISTP OR M00299) AND (NOT A_END);
+IF A_STOP THEN
+    R09060 := 555;
+END_IF;
+
+
+(* Rung 22 *)
+IF #ALW_ON AND (NOT A_STOP) THEN
+    R09060 := 0;
+END_IF;
+
+(* Rung 23: CIP A ended and/or stage 3 ended *)
+IF CMD_END OR ENDALL THEN
+    A_END := TRUE;
+END_IF;

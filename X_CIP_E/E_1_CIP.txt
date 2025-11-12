@@ -1,0 +1,47 @@
+(*!
+@purpose
+This program (`E_1_CIP.txt`) is the master organizational routine for the "CIP E" process. It is a high-level container, similar in function to `D_CIP.txt`, that does not contain any direct control logic itself. Its sole responsibility is to call all the sub-programs that constitute the CIP E control system in a specific, deterministic order during each PLC scan.
+
+This structured execution is essential for the stability and predictability of the CIP E sequence.
+
+The execution order is as follows:
+1.  `E_DI()`, `E_AI_AQ()`, `E_DQ()`: Handles all I/O processing for Line E.
+2.  `RX_TX_E()`: Manages communication specific to the E-line.
+3.  `E_BITAL()`: Decodes the current step number into an active step flag.
+4.  `E_ERR()`: Checks for and processes any error or fault conditions for Line E.
+5.  `E_GNACT()`: Energizes the physical outputs based on the active step.
+6.  `E_OPER()`: Arbitrates between automatic and manual control commands.
+7.  `E_STRCT()`: Executes the main sequencer logic that determines when to advance to the next step.
+8.  `FQ_E()`: Performs flow rate and totalization calculations for Line E.
+
+@inputs
+- This program has no direct inputs; it calls subroutines that interact with global variables.
+
+@outputs
+- This program has no direct outputs; it calls subroutines that interact with global variables.
+
+@notes
+- This code is for a GE/Emerson RX3i PLC and is written in Structured Text (ST).
+- This file is another clear example of the modular and structured programming methodology used in this project. It provides an excellent high-level overview of the entire scan cycle for the CIP E process.
+- The deliberate order of execution (I/O -> Logic -> Outputs) is a fundamental best practice for robust PLC programming.
+*)
+VAR_GLOBAL
+END_VAR
+
+(* Rung 1 *)
+E_DI();
+E_AI_AQ();
+RX_TX_E();
+
+(* Rung 2 *)
+E_BITAL();
+E_ERR();
+E_GNACT();
+
+(* Rung 3 *)
+E_OPER();
+E_STRCT();
+FQ_E();
+
+(* Rung 4 *)
+E_DQ();

@@ -1,0 +1,110 @@
+(*!
+@purpose
+This program (`HANDS.txt`) is a powerful, generic command arbitration routine that manages the Auto/Manual control logic for a large block of digital outputs. It iterates through a series of devices, applying a standard logic pattern to determine whether each device's final state should be controlled by the automatic sequence or by a manual operator command.
+
+The core logic, executed in a loop for each of the 96 devices (6 WORDs of 16 bits), is equivalent to:
+`Final_Output = (Manual_Command AND Manual_Status) OR (Automatic_Command AND NOT Manual_Status)`
+
+This ensures that:
+- If a device is in **Manual Mode** (its bit is 1 in `HND_STS`), its state is determined by the `XV` (manual/forced) command.
+- If a device is in **Auto Mode** (its bit is 0 in `HND_STS`), its state is determined by the `XVM` (automatic/logic) command.
+
+This program appears to be a more fundamental or older implementation of the same logic found in the more specific `D_OPER.txt` and `E_OPER.txt` files.
+
+@inputs
+- `HND_STS_PROXY` (%R09032) (ARRAY OF WORD): Each bit indicates the Manual (1) or Auto (0) status of a corresponding device.
+- `XVM_PROXY` (%M00001) (ARRAY OF WORD): Represents the commands from the automatic PLC logic.
+- `XV_PROXY` (%Q00001) (ARRAY OF WORD): Represents the manual commands, which may be directly forced by an operator on an HMI.
+
+@outputs
+- `XV4001_WRITE_PROXY` (%Q00001) (ARRAY OF WORD): The final, arbitrated output commands are written directly back to the physical output words.
+
+@notes
+- This code is for a GE/Emerson RX3i PLC and is written in Structured Text (ST).
+- The use of a `REPEAT...UNTIL` loop and indexed array access (`_PROXY` variables) makes this a very efficient and scalable way to handle command arbitration for a large number of devices without writing repetitive code for each one.
+- The logic within the loop is a classic and robust implementation of an Auto/Manual control station.
+- The `Test_*` variables and the first `ARRAY_MOVE_WORD` instruction at the top appear to be leftover test code and are not part of the main operational logic.
+*)
+VAR_GLOBAL
+    (* Proxy Variables for indexed memory access *)
+    HND_STS_PROXY AT %R09032 : ARRAY[0..5] OF WORD; 
+    XVM_PROXY AT %M00001 : ARRAY[0..5] OF WORD; 
+    XV_PROXY AT %Q00001 : ARRAY[0..5] OF WORD; 
+    XV4001_WRITE_PROXY AT %Q00001 : ARRAY[0..5] OF WORD;
+    
+    (* Original Global Variables *)
+    AUX1 AT %R00102 : ARRAY [0..4] OF WORD;
+    HND_STS AT %R09032 : WORD;
+    Test_DS : ARRAY [0..6] OF WORD;
+    Test_SNX : UINT;
+    Test_SR : ARRAY [0..6] OF WORD;
+    XV4001 AT %Q00001 : BOOL;
+    XVM001 AT %M00001 : BOOL;
+END_VAR
+
+(* ============================================= *)
+(* Rung 1: Comment - test *)
+(* ============================================= *)
+(* No executable code *)
+
+(* ============================================= *)
+(* Rung 2: Copy 5 words from Test_SR to Test_DS *)
+(* ARRAY_MOVE_WORD 5 Test_SR[0],G Test_SNX,G 1 1 Test_DS[0],G *)
+(* ============================================= *)
+Test_DS[0] := Test_SR[Test_SNX];
+Test_DS[1] := Test_SR[Test_SNX + 1];
+Test_DS[2] := Test_SR[Test_SNX + 2];
+Test_DS[3] := Test_SR[Test_SNX + 3];
+Test_DS[4] := Test_SR[Test_SNX + 4];
+
+(* ============================================= *)
+(* Rung 3: Initialize loop counter *)
+(* MOVE_WORD 1 1 AUX1[0],G *)
+(* ============================================= *)
+AUX1[0] := 1;
+
+(* ============================================= *)
+(* Rung 4: Label for loop - LABEL0 *)
+(* ============================================= *)
+(* LABELN LABEL0 - Implemented as REPEAT loop below *)
+
+REPEAT
+    (* ============================================= *)
+    (* Rung 5: Read data from memory arrays *)
+    (* ARRAY_MOVE_WORD 6 - Read 1 word from array of 6 *)
+    (* ============================================= *)
+    AUX1[1] := HND_STS_PROXY[AUX1[0] - 1];
+    AUX1[2] := XVM_PROXY[AUX1[0] - 1];
+    AUX1[3] := XV_PROXY[AUX1[0] - 1];
+    
+    (* ============================================= *)
+    (* Rung 6: Bitwise logic operations *)
+    (* ============================================= *)
+    (* AND_WORD 1 AUX1[1],G AUX1[3],G AUX1[3],G *)
+    AUX1[3] := AUX1[1] AND AUX1[3];
+    
+    (* NOT_WORD 1 AUX1[1],G AUX1[1],G *)
+    AUX1[1] := NOT AUX1[1];
+    
+    (* AND_WORD 1 AUX1[1],G AUX1[2],G AUX1[2],G *)
+    AUX1[2] := AUX1[1] AND AUX1[2];
+    
+    (* ============================================= *)
+    (* Rung 7: Combine and write result *)
+    (* ============================================= *)
+    (* OR_WORD 1 AUX1[3],G AUX1[2],G AUX1[2],G *)
+    AUX1[2] := AUX1[3] OR AUX1[2];
+    
+    (* ARRAY_MOVE_WORD 6 AUX1[2],G 1 AUX1[0],G 1 XV4001,G,%Q00001 *)
+    (* Write 1 word from AUX1[2] to array of 6 at index AUX1[0] *)
+    XV4001_WRITE_PROXY[AUX1[0] - 1] := AUX1[2];
+    
+    (* ============================================= *)
+    (* Rung 8: Increment counter and loop control *)
+    (* ============================================= *)
+    (* ADD_INT AUX1[0],G 1 AUX1[0],G *)
+    AUX1[0] := AUX1[0] + 1;
+    
+    (* LT_INT AUX1[0],G 7 ** - If AUX1[0] < 7 then JUMРN LABEL0 *)
+UNTIL AUX1[0] >= 7
+END_REPEAT;

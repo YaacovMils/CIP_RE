@@ -1,0 +1,56 @@
+(*!
+@purpose
+This program (`FQ_E.txt`) is the dedicated flow totalizer for the "CIP E" line. It is a direct functional parallel to `FQ.txt`. Its purpose is to count pulses from the flow meter (FIT-207) and accumulate the total volume of liquid delivered during the five main filling stages of the CIP E sequence.
+
+The program's logic performs three key tasks:
+1.  **Pulse Detection:** It uses a rising-edge trigger (`R_TRIG`) to detect each new pulse from the flow meter, ensuring that each pulse is counted exactly once.
+2.  **Conditional Accumulation:** It increments the volume counter (`FQ207`) by a fixed value (10, likely representing 10 liters) for each pulse, but only if the CIP E sequence is currently in one of the five designated filling steps.
+3.  **Counter Reset:** It resets the volume counter to zero whenever the sequence is not in a filling step or when a "next step" signal is received, ensuring the counter is ready for the next phase.
+
+@inputs
+- `FIT_207_PLS` (%M01556) (BOOL): The boolean signal representing a single pulse from the flow meter for Line E.
+- `E_Step1`, `E_Step21`, `E_Step41`, `E_Step61`, `E_Step81` (BOOL): Active step flags that correspond to the main filling step of each cleaning phase.
+- `N_Step_E` (BOOL): A flag that indicates a transition to a new step, used here as an additional reset condition.
+
+@outputs
+- `FQ207` (%R09280) (INT): An integer that accumulates the total calculated volume for the current filling operation.
+- `En_FQ` (BOOL): A boolean flag that is TRUE whenever the sequence is in one of the active filling steps.
+
+@notes
+- This code is for a GE/Emerson RX3i PLC and is written in Structured Text (ST).
+- The original comments are in Hebrew, with "קו E" meaning "Line E".
+- This program is a clear example of a conditional counter, a common and essential tool in batch and sequential process control.
+*)
+VAR_GLOBAL
+    E_Step1 AT %M01401 : BOOL; (* קו E *)
+    E_Step21 AT %M01421 : BOOL; (* קו E *)
+    E_Step41 AT %M01441 : BOOL; (* קו E *)
+    E_Step61 AT %M01461 : BOOL; (* קו E *)
+    E_Step81 AT %M01481 : BOOL; (* קו E *)
+    En_FQ AT %M01362 : BOOL; (* Enable *)
+    FQ207 AT %R09280 : INT;
+    FIT_207_Once AT %M01361 : BOOL;
+    FIT_207_PLS AT %M01556 : BOOL; (* Pulse=10 Liter *)
+    N_Step_E AT %M01321 : BOOL; (* קו E *)
+	FIT_OS : R_TRIG;
+END_VAR
+
+VAR
+    Rung1_EdgeDetector : BOOL := FALSE; (* Helper variable for rising edge detection in Rung 1 *)
+END_VAR
+
+(* Rung 1 *)
+FIT_OS(CLK := FIT_207_PLS)
+
+(* Rung 2 - Enable *)
+En_FQ := E_Step1 OR E_Step21 OR E_Step41 OR E_Step61 OR E_Step81;
+
+(* Rung 3 *)
+IF En_FQ AND FIT_OS.Q THEN
+    FQ207 := FQ207 + 10;
+END_IF;
+
+(* Rung 4 *)
+IF (NOT En_FQ) OR N_Step_E THEN
+    FQ207 := 0;
+END_IF;

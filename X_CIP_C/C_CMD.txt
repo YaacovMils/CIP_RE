@@ -1,0 +1,120 @@
+(*!
+@purpose
+This program (`C_CMD.txt`) serves as the command decoder for the Cleaning-In-Place (CIP) sequence for Line C. It is a direct parallel to `A_CMD.txt` and `B_CMD.txt`, responsible for translating a single integer command into boolean flags that drive the process stages.
+
+A key distinction for this program is that it is primarily driven by a "local" command variable, `CIPCCDL`, which is set by other programs (like `BARRELS.txt`) in addition to potential HMI commands. This allows Line C to function both as a standalone CIP unit and as a subordinate service to other automated processes.
+
+Its primary responsibilities are:
+1.  **Command Interpretation:** It decodes the `CIPCCDL` integer to determine the requested action (start Stage 1, Stage 2 with soda/acid, Stage 3, or End).
+2.  **State Control:** It sets and resets the state flags (`C1_STRT`, `C2_STRT`, `C3_STRT`) based on the command, ensuring only one stage is active at a time.
+3.  **Chemical Selection:** It sets the `C2USE_S` flag (TRUE for soda, FALSE for acid) based on the specific command for Stage 2.
+4.  **Stop and End Logic:** It consolidates multiple stop conditions (global stop, alarms, HMI stop) into a single `C_STOP` flag and handles the end-of-sequence logic.
+
+@inputs
+- `CIPCCDL` (%R00200) (INT): The local command integer for Line C.
+- CIPCCDL = 1 -> C1_STRT
+	CIPCCDL = 2 -> C2_STRT and C2USE_S (TRUE for soda)
+	CIPCCDL = 3 -> C2_STRT and C2USE_S (FALSE for acid)
+	CIPCCDL = 4 -> C3_STRT
+	CIPCCDL = 7 -> C_END
+- `STOPALL` (%M00104) (BOOL): A global command to stop all CIP processes.
+- `C_ALARM` (%M00172) (BOOL): A flag indicating an active alarm condition for Line C.
+- `CMMISTP` (%M00163) (BOOL): A stop command initiated from the HMI/MMI for Line C.
+- `ENDALL` (%M00105) (BOOL): A global command to end all CIP processes.
+
+@outputs
+- `C1_STRT` (%M00157) (BOOL): A flag to start Stage 1 (pre-rinse).
+- `C2_STRT` (%M00158) (BOOL): A flag to start Stage 2 (chemical wash).
+- `C3_STRT` (%M00159) (BOOL): A flag to start Stage 3 (final rinse).
+- `C2USE_S` (%M00161) (BOOL): A flag to select the chemical for Stage 2.
+- `C_STOP` (%M00155) (BOOL): A consolidated flag indicating the Line C sequence should be stopped.
+- `C_END` (%M00156) (BOOL): A flag indicating the successful completion or forced end of the Line C sequence.
+- `FQCCQTY` (%R09015) (INT): Resets the totalized flow counter to zero at the start of a new stage.
+
+@notes
+- This code is for a GE/Emerson RX3i PLC and is written in Structured Text (ST).
+- The use of a local command word (`CIPCCDL`) makes this CIP line more versatile, allowing it to serve as a resource for other automated sequences.
+- The logic strictly enforces a one-stage-at-a-time execution policy.
+*)
+VAR_GLOBAL
+	#ALW_OFF AT %S00008 : BOOL; (* Always OFF *)
+	C1_STRT AT %M00157 : BOOL; (* CIP C stage 1 started *)
+	C2_STRT AT %M00158 : BOOL; (* CIP C stage 2 started *)
+	C2USE_S AT %M00161 : BOOL; (* CIP C stage 2 use soda *)
+	C3_STRT AT %M00159 : BOOL; (* CIP C Stage 3 started *)
+	C_ALARM AT %M00172 : BOOL; (* CIP C in alarm state. *)
+	C_END AT %M00156 : BOOL; (* CIP C ended *)
+	C_STOP AT %M00155 : BOOL; (* CIP C stopped *)
+	CIPCCDL AT %R00200 : INT; (* CIP C command (local-no genius) *)
+	CMMISTP AT %M00163 : BOOL; (* CIP C stopped from MMI *)
+	ENDALL AT %M00105 : BOOL; (* End all processes *)
+	FQCCQTY AT %R09015 : INT; (* FQC C quantity (+genius send) *)
+	M00285 AT %M00285 : BOOL;
+	M00287 AT %M00287 : BOOL;
+	R09062 AT %R09062 : INT;
+	STOPALL AT %M00104 : BOOL; (* Stop all processes *)
+END_VAR
+
+(* Rung 1: COMMENT0 *)
+
+(* Rung 2: Command start stage 1 *)
+CMD_S1 := (CIPCCDL = 1);
+
+(* Rung 3: Command Start stage 2 with SODA *)
+CMD_S2S := (CIPCCDL = 2);
+
+(* Rung 4: Command Start stage 2 with acid *)
+CMD_S2A := (CIPCCDL = 3);
+
+(* Rung 5: Command Start stage 3 *)
+CMD_S3 := (CIPCCDL = 4);
+
+(* Rung 6: Command End CIP C and/or stage 3 *)
+CMD_END := (CIPCCDL = 7);
+
+(* Rung 7: COMMENT1 *)
+
+(* Rung 8: FQC C quantity (+genius send) *)
+IF (CMD_S3 OR CMD_S2S OR CMD_S2A OR CMD_S1)
+	AND (NOT C3_STRT AND NOT C2_STRT AND NOT C1_STRT AND NOT C_STOP)  THEN
+	FQCCQTY := 0;
+	C_END := FALSE;
+END_IF;
+
+(* Rung 9: COMMENT2 *)
+
+(* Rung 10: CIP C stage 1 started *)
+IF CMD_S1 AND NOT C1_STRT AND NOT C2_STRT AND NOT C3_STRT AND NOT C_STOP THEN
+	C1_STRT := TRUE;
+END_IF;
+
+(* Rung 11: COMMENT3 *)
+
+(* Rung 12: CIP C stage 2 started *)
+IF (CMD_S2S OR CMD_S2A) AND NOT C1_STRT AND NOT C2_STRT AND NOT C3_STRT AND NOT C_STOP THEN
+	C2_STRT := TRUE;
+	IF CMD_S2S THEN C2USE_S := TRUE;END_IF;
+	IF CMD_S2A THEN C2USE_S := FALSE;END_IF;	
+END_IF;
+
+(* Rung 13: COMMENT4 *)
+
+(* Rung 14: CIP C Stage 3 started *)
+IF CMD_S3 AND NOT C3_STRT AND NOT C2_STRT AND NOT C1_STRT AND NOT C_STOP THEN
+	C3_STRT := TRUE;
+END_IF;
+
+(* Rung 15: COMMENT5 *)
+
+(* Rung 16: CIP C stopped *)
+C_STOP :=  NOT M00287 OR )(STOPALL OR C_ALARM OR CMMISTP OR M00285) AND NOT C_END);
+
+(* Rung 17 *)
+IF #ALW_OFF AND NOT C_STOP THEN
+	R09062 := 0;
+END_IF;
+
+(* Rung 18: CIP C ended *)
+IF CMD_END OR ENDALL THEN
+	C_END := TRUE;
+END_IF;

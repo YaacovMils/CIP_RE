@@ -1,0 +1,759 @@
+(*!
+@purpose
+This program (`STERLS.txt`) manages a complex, multi-stage SIP (Sterilization-In-Place) sequence, which is used to sterilize portable barrels using high-temperature steam. This program acts as a master state machine, controlling the entire process from start to finish, including heating, holding, cooling/purging, and data logging.
+
+The main phases of the sequence are:
+1.  **Heating:** The program opens the main steam valve and the valves to the selected barrels. It monitors the temperature inside each barrel, waiting for it to reach the sterilization setpoint (e.g., 121°C).
+2.  **Holding:** Once the target temperature is reached, a countdown timer runs for a specified duration (e.g., 20 minutes) to ensure complete sterilization.
+3.  **Steam Purge:** After the hold time, the steam supply is shut off, and an outlet valve is opened to vent the steam pressure.
+4.  **Nitrogen Pressurization:** A nitrogen valve is opened to cool the barrel and provide a sterile, inert blanket. The sequence ends when a target pressure is reached.
+5.  **Data Logging:** Upon completion, the program captures critical process parameters for each sterilized barrel (Barrel ID, Total Time, Heat Time, etc.) and holds them in registers for a short period for an external system (SCADA/SQL) to log.
+
+@inputs
+- `ST_STRL`, `ST2STRL`, `PB_Start_SIP`: Start commands from physical buttons or HMI screens.
+- `STP_STL`, `PB_Stop_SIP`: Stop commands.
+- `CNF_BR1`, `CNF_BR2`, `CNF_BR3`: Configuration flags indicating which of the three barrels are included in the sequence.
+- `TT1014`, `TT1015`, `TT1016`: Raw analog inputs for the temperature transmitters in the barrels.
+- `PRS1013`: Raw analog input for the nitrogen pressure sensor.
+- `SEC_PLS`, `MIN_PLS`: System clock pulses for driving internal timers and counters.
+
+@outputs
+- `STERIL`: The main flag indicating that the sterilization sequence is active.
+- `XVM042`: Command to open the main steam supply valve.
+- `XVM07*`, `MV*`: Commands to open the various steam, nitrogen, and outlet valves for the barrels.
+- `ALRM_T1`, `ALRM_T2`, `ALM_T3`: Individual alarm flags that are set if a barrel fails to reach the target temperature within a specified time.
+- `SIP_End`: A flag that is set high upon successful completion of the entire sequence.
+- `SIP_Tank_No`, `SIP_Heat_Time`, `SIP_Total_Time`, `SIP_Temperature`: Registers that hold the final data for logging after a cycle is complete.
+
+@notes
+- This code is for a GE/Emerson RX3i PLC and is written in Structured Text (ST).
+- This is one of the most complex sequential logic blocks in the codebase, involving multiple nested states, timers, and alarm conditions.
+- The program uses a timed sequence at the end (`EN_SIP_SEQ`) to present the logged data for each completed barrel one by one, ensuring the logging system can capture them correctly.
+*)
+VAR_GLOBAL
+    "#ALW_OFF" AT %S00008 : BOOL; (* Always OFF *)
+    "#ALW_ON" AT %S00007 : BOOL; (* Always ON *)
+    "#ANY_FLT" AT %SC0009 : BOOL; (* Set when any fault occurs *)
+    "#T_SEC" AT %S00005 : BOOL; (* 1.0 second timer contact *)
+    BRL1_END AT %M01118 : BOOL;
+    BRL2_END AT %M01119 : BOOL;
+    BRL3_END AT %M01120 : BOOL;
+    C_45CLC AT %R00119 : INT; (* Calculated Cond in SODA 1/2 brl *)
+    C_ALARM AT %M00172 : BOOL; (* CIP C in alarm state. *)
+    COND_45 AT %R00592 : INT; (* Required Conduct in Soda 1/2 brl *) (* NOTE: XML address R00536[56] is unusual, assuming direct %R address *)
+    EN_SIP_SEQ AT %M01112 : BOOL; (* SIP_Enable_READ *)
+    M00260 AT %M00260 : BOOL;
+    M00277 AT %M00277 : BOOL;
+    M00278 AT %M00278 : BOOL;
+    M00285 AT %M00285 : BOOL;
+    M01125 AT %M01125 : BOOL;
+    MIN_PLS AT %G00002 : BOOL;
+    P4071 AT %Q00071 : BOOL; (* ASID DOSING PUMP TO "RUN" *)
+    PB_Start_SIP AT %M01123 : BOOL; (* HMI Start SIP *)
+    PB_Stop_SIP AT %M01124 : BOOL; (* HMI Stop SIP *)
+    PRS1013 AT %AI0013 : INT; (* STERILL STEAM PRESSURE *)
+    Q00073 AT %Q00073 : BOOL;
+    Q00074 AT %Q00074 : BOOL;
+    Q00075 AT %Q00075 : BOOL;
+    Q00076 AT %Q00076 : BOOL;
+    Q00077 AT %Q00077 : BOOL;
+    Q00078 AT %Q00078 : BOOL;
+    Q00079 AT %Q00079 : BOOL;
+    Q00080 AT %Q00080 : BOOL;
+    R00083 AT %R00083 : WORD; (* CIP_SIP_LOG.INT[13] *)
+    R00084 AT %R00084 : INT;
+    R00085 AT %R00085 : INT;
+    R00089 AT %R00089 : INT; (* CIP_SIP_LOG.INT[19] *)
+    R00225 AT %R00225 : INT; (* Nirogen Pressure *)
+    R00446 AT %R00446 : ARRAY [0..3] OF WORD;
+    R00452 AT %R00452 : ARRAY [0..3] OF WORD;
+    R00461 AT %R00461 : ARRAY [0..3] OF WORD;
+    R00464 AT %R00464 : INT;
+    R00465 AT %R00465 : ARRAY [0..3] OF WORD;
+    R00469 AT %R00469 : INT;
+    R00470 AT %R00470 : INT;
+    R00471 AT %R00471 : INT;
+    R00472 AT %R00472 : ARRAY [0..3] OF WORD;
+    R00486 AT %R00486 : INT;
+    R00487 AT %R00487 : INT;
+    R00491 AT %R00491 : REAL;
+    R00493 AT %R00493 : REAL;
+    R00495 AT %R00495 : INT;
+    R00496 AT %R00496 : INT;
+    R00497 AT %R00497 : ARRAY [0..3] OF WORD;
+    R00510 AT %R00510 : INT;
+    R00511 AT %R00511 : ARRAY [0..3] OF WORD;
+    R00514 AT %R00514 : INT;
+    SEC_PLS AT %G00001 : BOOL;
+    SIP_CFG_1 AT %M01113 : BOOL; (* CFG_1 *)
+    SIP_CFG_1_2 AT %M01114 : BOOL; (* CFG_1+2 *)
+    SIP_CFG_1_2_3 AT %M01117 : BOOL; (* CFG1+2+3 *)
+    SIP_CFG_2 AT %M01115 : BOOL; (* CFG2 *)
+    SIP_CFG_3 AT %M01116 : BOOL; (* CFG3 *)
+    SIP_End AT %M01110 : BOOL; (* CIP_SIP_LOG.Bits[10] *)
+    SIP_End_OS AT %M01111 : BOOL;
+    SIP_Heat_Time AT %R00081 : INT; (* CIP_SIP_LOG.INT[10] *)
+    SIP_Run AT %M01108 : BOOL; (* SIP Running *)
+    SIP_Tank_No AT %R00080 : INT; (* CIP_SIP_LOG.INT[10] *)
+    SIP_Temperature AT %R00060 : REAL; (* CIP_SIP_LOG.REAL[10] *)
+    SIP_Total_Time AT %R00082 : INT; (* CIP_SIP_LOG.INT[12] *)
+    ST2STRL AT %I00086 : BOOL; (* START STERILISATION BUTTON 2 *)
+    ST_STRL AT %I00080 : BOOL; (* START STERILISATION BUTTON 1 *)
+    STP_STL AT %I00087 : BOOL; (* STOP STERILISATION *)
+    STRL_LM AT %M00064 : BOOL; (* STERILISATION "RUN" LAMP *)
+    T00001 AT %T00001 : BOOL;
+    Tank1_Temp AT %R00062 : REAL;
+    Tank2_Temp AT %R00064 : REAL;
+    Tank3_Temp AT %R00066 : REAL;
+    TT1014 AT %AI0014 : INT; (* STERILL TANK2 TEMPERATURE *)
+    TT1015 AT %AI0015 : INT; (* STERILL TANK1 TEMPERATURE *)
+    XVM038 AT %M00038 : BOOL; (* FROM CIP C TANK TO TEMP. TANK T *)
+    XVM042 AT %M00042 : BOOL; (* STERILISATION VALVE STEAM *)
+    XVM071 AT %M00071 : BOOL; (* Barrel SIP Tank3 Out *)
+END_VAR
+
+VAR
+    (* Internal variables for edge detection and function blocks *)
+    Rung4_edge : BOOL := FALSE;
+    TON_Rung28 : TON;
+    TON_Rung32 : TON;
+    TON_Rung36 : TON;
+    CTD_Rung51 : CTD;
+    Rung12_CONT : BOOL;
+    Rung27_CONT : BOOL;
+    Rung31_CONT : BOOL;
+    Rung35_CONT : BOOL;
+    Rung47_CONT : BOOL;
+    
+    (* Local variables from XML - scope is local to this block *)
+    ALM_CND AT %M00257 : BOOL; (* alarm conductivity *)
+    ALM_T3 AT %M00282 : BOOL;
+    ALRM_T1 AT %M00253 : BOOL;
+    ALRM_T2 AT %M00252 : BOOL;
+    BR3_NM AT %R09054 : INT; (* Corresponds to PRES_ST[4] *)
+    BRL1_NM AT %R09052 : INT; (* NUMBER BARREL 1 - Corresponds to PRES_ST[2] *)
+    BRL2_NM AT %R09053 : INT; (* Corresponds to PRES_ST[3] *)
+    CLOCK AT %R07007 : INT; (* from PLC4 time *)
+    CNF_BR1 AT %G00221 : BOOL; (* CONF STER BARREL No1 *)
+    CNF_BR2 AT %G00222 : BOOL;
+    CNF_BR3 AT %G00223 : BOOL;
+    DLT_CND AT %R00475 : INT; (* delta reality & sp conductivity *)
+    FL_STR AT %M00261 : BOOL; (* start filter sterill *)
+    MS076 AT %M00076 : BOOL; (* syrena *)
+    MV4074 AT %M00074 : BOOL; (* XV4074 Main Nitrogen To Barrel *)
+    MV4075 AT %M00075 : BOOL; (* XV4075 Steam To Barrel *)
+    N2_END AT %M00247 : BOOL;
+    N2_FULL AT %M00248 : BOOL;
+    NITROGN AT %M00245 : BOOL;
+    PRES_ST AT %R09050 : ARRAY [0..9] OF WORD; (* pressure sterilisation *)
+    SRT_OK AT %M00263 : BOOL; (* sterill ok *)
+    ST_SCR AT %G00225 : BOOL; (* START 1 FROM TOUCH SCREEN *)
+    STERIL AT %M00244 : BOOL; (* tank steril *)
+    STM_OUT AT %M00246 : BOOL; (* steam outlet *)
+    STP_TS AT %G00224 : BOOL; (* STOP STER FROM TOUCH SCREEN *)
+    STR_TIM AT %R00480 : ARRAY [0..3] OF WORD; (* sterill time *)
+    TIME AT %R00479 : INT;
+    TIMEOVR AT %M00262 : BOOL; (* sterill over time *)
+    TMP1_OK AT %M00251 : BOOL;
+    TMP2_OK AT %M00254 : BOOL;
+    TMP3_OK AT %M00281 : BOOL;
+    TMP_OK AT %M00199 : BOOL;
+    TMPR1 AT %R00468 : INT; (* Temperature in tank 1 *)
+    TMPR2 AT %R00460 : INT; (* Temp tank2 *)
+    TMPR3 AT %R00485 : INT;
+    TT1016 AT %AI0016 : INT;
+    TT2016 AT %R00483 : REAL;
+    XVM073 AT %M00073 : BOOL; (* X4073 Barrel SIP *)
+    XVM077 AT %M00077 : BOOL; (* XV4077 Barrel SIP Tank2 In *)
+    XVM078 AT %M00078 : BOOL; (* XV4078 Barrel SIP Tank2 In *)
+    XVM079 AT %M00079 : BOOL; (* XV4079 Barrel SIP Tank2 Out *)
+    XVM080 AT %M00080 : BOOL; (* XV4080 Barrel SIP Tank2 out *)
+END_VAR
+
+
+(* Rung 1 *)
+(*
+ * Block Instruction Analysis: MOVE_INT
+ * This instruction moves integer data.
+ * Source: BRL1_NM (starting at %R09052)
+ * Destination: R00083 (starting at %R00083)
+ * Length: 3 WORDs
+ * Address Range: Reads 3 words from %R09052 to %R09054 and writes to %R00083, %R00084, and %R00085.
+*)
+IF SIP_Run AND (SIP_Total_Time < 5) THEN
+    R00083 := PRES_ST[2];
+    R00084 := PRES_ST[3];
+    R00085 := PRES_ST[4];
+END_IF;
+
+(* Rung 2: Steril Ended *)
+
+(* Rung 3: SIP Running *)
+SIP_Run := STERIL;
+
+(* Rung 4 *)
+SIP_End_OS := (NOT SIP_Run) AND (NOT Rung4_edge);
+Rung4_edge := NOT SIP_Run;
+
+(* Rung 5: SIP Total Time *)
+
+(* Rung 6: CIP_SIP_LOG.INT[12] *)
+IF SIP_Run AND SEC_PLS THEN
+    SIP_Total_Time := SIP_Total_Time + 1;
+END_IF;
+
+(* Rung 7: SIP Heat Time *)
+
+(* Rung 8: CIP_SIP_LOG.INT[10] *)
+IF XVM042 AND TMP_OK AND SEC_PLS THEN
+    SIP_Heat_Time := SIP_Heat_Time + 1;
+END_IF;
+
+(* Rung 9: SIP Temperature *)
+
+(* Rung 10 *)
+IF SIP_Run AND (NOT NITROGN) AND (NOT STM_OUT) AND (NOT N2_FULL) THEN
+    Tank1_Temp := INT_TO_REAL(TMPR1);
+    Tank2_Temp := INT_TO_REAL(TMPR2);
+    Tank3_Temp := INT_TO_REAL(TMPR3);
+END_IF;
+
+(* Rung 11: SEQ *)
+
+(* Rung 12: CIP_SIP_LOG.INT[19] *)
+IF EN_SIP_SEQ AND SEC_PLS THEN
+    R00089 := R00089 + 1;
+END_IF;
+Rung12_CONT := EN_SIP_SEQ AND (R00089 >= 20);
+
+(* Rung 13 *)
+(*
+ * Block Instruction Analysis: BLK_CLR_WORD
+ * This instruction clears a block of memory by writing zeros.
+ * Destination: SIP_Tank_No (starting at %R00080)
+ * Length: 6 WORDs
+ * Address Range: Writes 0 to 6 words from %R00080 to %R00085.
+ *
+ * Block Instruction Analysis: MOVE_REAL
+ * Source: Constant value 0.0
+ * Destination: SIP_Temperature (%R00060)
+ *
+ * Block Instruction Analysis: MOVE_INT
+ * Source: Constant value 0
+ * Destination: R00089 (%R00089)
+*)
+IF Rung12_CONT THEN
+    SIP_Tank_No := 0;
+    SIP_Heat_Time := 0;
+    SIP_Total_Time := 0;
+    R00083 := 0;
+    R00084 := 0;
+    R00085 := 0;
+    SIP_Temperature := 0.0;
+    R00089 := 0;
+    EN_SIP_SEQ := FALSE;
+END_IF;
+
+(* Rung 14: SIP END SEQ *)
+
+(* Rung 15: CIP_SIP_LOG.Bits[10] *)
+SIP_End := EN_SIP_SEQ AND (BRL1_END OR BRL2_END OR BRL3_END);
+
+(* Rung 16: Barrel 1 *)
+
+(* Rung 17: BRL1_END *)
+(*
+ * Block Instruction Analysis: MOVE_INT
+ * Source: R00083 (%R00083)
+ * Destination: SIP_Tank_No (%R00080)
+*)
+IF (SIP_CFG_1 OR SIP_CFG_1_2 OR SIP_CFG_1_2_3) AND (R00089 >= 1) AND (R00089 <= 4) THEN
+    SIP_Tank_No := R00083;
+    SIP_Temperature := Tank1_Temp / 10.0;
+END_IF;
+BRL1_END := (SIP_CFG_1 OR SIP_CFG_1_2 OR SIP_CFG_1_2_3) AND (R00089 >= 2) AND (R00089 <= 4);
+
+(* Rung 18: Barrel 2 *)
+
+(* Rung 19 *)
+(*
+ * Block Instruction Analysis: MOVE_INT
+ * Source: R00084 (%R00084)
+ * Destination: SIP_Tank_No (%R00080)
+*)
+IF (SIP_CFG_1_2 OR SIP_CFG_2 OR SIP_CFG_1_2_3) AND (R00089 >= 7) AND (R00089 <= 11) THEN
+    SIP_Tank_No := R00084;
+    SIP_Temperature := Tank2_Temp / 10.0;
+END_IF;
+BRL2_END := ((R00089 >= 8) AND (R00089 <= 11)) AND (SIP_CFG_1_2 OR SIP_CFG_2 OR SIP_CFG_1_2_3);
+
+(* Rung 20: Barrel 3 *)
+
+(* Rung 21 *)
+(*
+ * Block Instruction Analysis: MOVE_INT
+ * Source: R00085 (%R00085)
+ * Destination: SIP_Tank_No (%R00080)
+*)
+IF (SIP_CFG_3 OR SIP_CFG_1_2_3) AND (R00089 >= 14) AND (R00089 <= 18) THEN
+    SIP_Tank_No := R00085;
+    SIP_Temperature := Tank3_Temp / 10.0;
+END_IF;
+BRL3_END := ((R00089 >= 15) AND (R00089 <= 18)) AND (SIP_CFG_3 OR SIP_CFG_1_2_3);
+
+(* Rung 22: COMMENT9 *)
+
+(* Rung 23: tank steril *)
+IF ((ST_STRL OR ST2STRL OR ST_SCR OR PB_Start_SIP) AND (CNF_BR1 OR CNF_BR2 OR CNF_BR3) AND (NOT STP_STL) AND (NOT STP_TS) AND (NOT PB_Stop_SIP)) THEN
+    XVM042 := TRUE;
+    STERIL := TRUE;
+END_IF;
+
+(* Rung 24: XV4078 Barrel SIP Tank2 In *)
+XVM078 := STERIL AND CNF_BR1 AND (NOT ALRM_T1);
+XVM077 := STERIL AND CNF_BR2 AND (NOT ALRM_T2);
+XVM073 := STERIL AND CNF_BR3 AND (NOT ALM_T3);
+
+(* Rung 25: Barrel SIP Tank2 out *)
+XVM071 := STERIL AND (XVM042 OR STM_OUT OR N2_FULL) AND CNF_BR3;
+XVM079 := STERIL AND (XVM042 OR STM_OUT OR N2_FULL) AND CNF_BR1;
+XVM080 := STERIL AND (XVM042 OR STM_OUT OR N2_FULL) AND CNF_BR2;
+
+(* Rung 26 *)
+TMP3_OK := STERIL AND (TMPR3 >= 1210);
+
+(* Rung 27 *)
+IF CNF_BR3 THEN
+    R00487 := TMPR3 - R00486;
+END_IF;
+Rung27_CONT := CNF_BR3 AND (R00487 < 0);
+
+(* Rung 28 *)
+TON_Rung28(IN:=(Rung27_CONT AND XVM042) OR (CNF_BR3 AND (NOT TMP3_OK) AND TMP_OK), PT:=T#180S);
+ALM_T3 := TON_Rung28.Q;
+
+(* Rung 29 *)
+TMP2_OK := STERIL AND (TMPR2 >= 1210);
+
+(* Rung 30 *)
+(*
+ * Block Instruction Analysis: MOVE_INT
+ * This instruction moves integer data.
+ * Source: TMPR2 (%R00460), TMPR1 (%R00468), TMPR3 (%R00485)
+ * Destination: R00495 (%R00495), R00470 (%R00470), R00486 (%R00486)
+*)
+IF MIN_PLS THEN
+    R00495 := TMPR2;
+    R00470 := TMPR1;
+    R00486 := TMPR3;
+END_IF;
+
+(* Rung 31 *)
+IF CNF_BR2 THEN
+    R00496 := TMPR2 - R00495;
+END_IF;
+Rung31_CONT := CNF_BR2 AND (R00496 < 0);
+
+(* Rung 32 *)
+TON_Rung32(IN:=(Rung31_CONT AND XVM042) OR (CNF_BR2 AND (NOT TMP1_OK) AND TMP_OK), PT:=T#180S);
+ALRM_T2 := TON_Rung32.Q;
+
+(* Rung 33 *)
+TMP1_OK := STERIL AND (TMPR1 >= 1210);
+
+(* Rung 34 *)
+TMP_OK := STERIL AND ((NOT CNF_BR1) OR TMP1_OK) AND ((NOT CNF_BR2) OR TMP2_OK) AND ((NOT CNF_BR3) OR TMP3_OK);
+
+(* Rung 35 *)
+IF CNF_BR1 THEN
+    R00471 := TMPR1 - R00470;
+END_IF;
+Rung35_CONT := CNF_BR1 AND (R00471 < -100);
+
+(* Rung 36 *)
+TON_Rung36(IN:=(Rung35_CONT AND XVM042) OR (CNF_BR1 AND TMP_OK AND (NOT TMP1_OK)), PT:=T#180S);
+ALRM_T1 := TON_Rung36.Q;
+
+(* Rung 37: syrena *)
+MS076 := ALRM_T2 OR ALRM_T1 OR ALM_CND OR ALM_T3 OR M00285;
+
+(* Rung 38: check tanks config for SQL *)
+
+(* Rung 39: CFG_1 *)
+SIP_CFG_1 := (SIP_Run AND CNF_BR1 AND (NOT CNF_BR2) AND (NOT CNF_BR3)) OR (SIP_CFG_1 AND (EN_SIP_SEQ OR SIP_Run));
+
+(* Rung 40: CFG_1+2 *)
+SIP_CFG_1_2 := (SIP_Run AND CNF_BR1 AND CNF_BR2 AND (NOT CNF_BR3)) OR (SIP_CFG_1_2 AND (EN_SIP_SEQ OR SIP_Run));
+
+(* Rung 41: CFG2 *)
+SIP_CFG_2 := (SIP_Run AND CNF_BR2 AND (NOT CNF_BR1) AND (NOT CNF_BR3)) OR (SIP_CFG_2 AND (EN_SIP_SEQ OR SIP_Run));
+
+(* Rung 42: CFG3 *)
+SIP_CFG_3 := (SIP_Run AND CNF_BR3 AND (NOT CNF_BR1) AND (NOT CNF_BR2)) OR (SIP_CFG_3 AND (EN_SIP_SEQ OR SIP_Run));
+
+(* Rung 43: CFG1+2+3 *)
+SIP_CFG_1_2_3 := (SIP_Run AND CNF_BR1 AND CNF_BR2 AND CNF_BR3) OR (SIP_CFG_1_2_3 AND (EN_SIP_SEQ OR SIP_Run));
+
+(* Rung 44: Temperature Record *)
+
+(* Rung 45 *)
+(*
+ * Block Instruction Analysis: MOVE_INT
+ * This instruction moves integer data.
+ * Source: TMPR2 (%R00460)
+ * Destination: R00469 (%R00469)
+ * Length: 1 WORD
+*)
+IF CNF_BR1 AND CNF_BR2 AND STERIL AND (TMPR1 >= TMPR2) THEN
+    R00469 := TMPR2;
+END_IF;
+
+(* Rung 46 *)
+(*
+ * Block Instruction Analysis: MOVE_INT
+ * This instruction moves integer data.
+ * Source: TMPR1 (%R00468)
+ * Destination: R00469 (%R00469)
+ * Length: 1 WORD
+*)
+IF CNF_BR1 AND (NOT CNF_BR2) AND (NOT CNF_BR3) THEN
+    R00469 := TMPR1;
+END_IF;
+
+(* Rung 47 *)
+(*
+ * Block Instruction Analysis: MOVE_INT
+ * This instruction moves integer data.
+ * Source: TMPR1 (%R00468)
+ * Destination: R00469 (%R00469)
+ * Length: 1 WORD
+*)
+IF CNF_BR1 AND CNF_BR2 AND STERIL AND (TMPR2 > TMPR1) THEN
+    R00469 := TMPR1;
+END_IF;
+
+(* Rung 48 *)
+(*
+ * Block Instruction Analysis: MOVE_INT
+ * This instruction moves integer data.
+ * Source: TMPR2 (%R00460)
+ * Destination: R00469 (%R00469)
+ * Length: 1 WORD
+*)
+IF CNF_BR2 AND (NOT CNF_BR1) AND (NOT CNF_BR3) THEN
+    R00469 := TMPR2;
+END_IF;
+
+(* Rung 49 *)
+(*
+ * Block Instruction Analysis: MOVE_INT
+ * This instruction moves integer data.
+ * Source: TMPR3 (%R00485)
+ * Destination: R00469 (%R00469)
+ * Length: 1 WORD
+*)
+IF (NOT CNF_BR1) AND (NOT CNF_BR2) AND CNF_BR3 THEN
+    R00469 := TMPR3;
+END_IF;
+
+(* Rung 50 *)
+(*
+ * Block Instruction Analysis: MOVE_INT
+ * This instruction moves integer data.
+ * Source: TMPR3 (%R00485)
+ * Destination: R00469 (%R00469)
+ * Length: 1 WORD
+*)
+IF STERIL AND CNF_BR1 AND CNF_BR2 AND CNF_BR3 AND (TMPR3 < R00469) THEN
+    R00469 := TMPR3;
+END_IF;
+
+(* Rung 51 *)
+IF STERIL THEN
+    R00464 := (R00469 - 1210) / 10;
+END_IF;
+Rung47_Continuation := R00452[0] = 5;
+
+(* Rung 52 *)
+IF Rung47_Continuation THEN
+    R00452[0] := R00452[0] - R00464;
+END_IF;
+
+(* Rung 53 *)
+CTD_Rung51(CD := (XVM042 AND MIN_PLS AND TMP_OK), R := (NOT XVM042), PV := 20);
+T00001 := CTD_Rung51.ENO;
+
+(* Rung 54: STERILISATION VALVE STEAM *)
+IF T00001 OR STP_STL OR STP_TS OR PB_Stop_SIP OR (TIMEOVR AND (NOT STERIL)) THEN
+    XVM042 := FALSE;
+END_IF;
+
+(* Rung 55: STERILISATION "RUN" LAMP *)
+STRL_LM := XVM042 OR (#T_SEC AND (NITROGN OR STM_OUT));
+
+(* Rung 56 *)
+IF STERIL AND (NOT XVM042) AND (NOT NITROGN) THEN
+    STM_OUT := TRUE;
+END_IF;
+
+(* Rung 57 *)
+IF (NOT STP_TS) AND (NOT PB_Stop_SIP) AND STM_OUT AND (PRES_ST[0] < 700) THEN
+    NITROGN := TRUE;
+END_IF;
+
+(* Rung 58: XV4074 Main Nitrogen To Barrel *)
+MV4074 := NITROGN AND (NOT MV4075) OR (SRT_OK AND NITROGN);
+XVM038 := NITROGN AND (NOT MV4075);
+
+(* Rung 59 *)
+TON_Rung28(EN := NITROGN, PV := 400);
+IF TON_Rung28.ENO THEN
+    STM_OUT := FALSE;
+END_IF;
+
+(* Rung 60: %R9050 STERLS.PRES_ST[0] *)
+
+(* Rung 61 *)
+IF (NOT STM_OUT) AND NITROGN AND (R00225 >= 1850) THEN
+    N2_FULL := TRUE;
+END_IF;
+
+(* Rung 62 *)
+TON_Rung32(EN := N2_FULL, PV := 200);
+N2_END := TON_Rung32.ENO;
+
+(* Rung 63 *)
+(*
+ * Block Instruction Analysis: MOVE_INT
+ * Source: PRS1013 (%AI0013)
+ * Destination: R00225 (%R00225)
+*)
+R00225 := PRS1013 / 11;
+
+(* Rung 64 *)
+(*
+ * Block Instruction Analysis: MOVE_INT
+ * Source: R00225 (%R00225)
+ * Destination: PRES_ST[0] (%R09050)
+ *
+ * Block Instruction Analysis: MOVE_INT
+ * Source: TMPR2 (%R00460)
+ * Destination: PRES_ST[1] (%R09051)
+ *
+ * Block Instruction Analysis: MOVE_INT
+ * Source: TMPR1 (%R00468)
+ * Destination: PRES_ST[5] (%R09055)
+*)
+IF STERIL OR FL_STR OR M01125 THEN
+    PRES_ST[0] := R00225;
+    PRES_ST[1] := TMPR2;
+    PRES_ST[5] := TMPR1;
+END_IF;
+
+(* Rung 65 *)
+(*
+ * Block Instruction Analysis: MOVE_INT
+ * Source: TMPR3 (%R00485)
+ * Destination: PRES_ST[6] (%R09056)
+*)
+IF Rung12_Continuation THEN
+    PRES_ST[6] := TMPR3;
+END_IF;
+
+(* Rung 66 *)
+(* This rung is disabled. *)
+
+(* Rung 67 *)
+TT2016 := INT_TO_REAL(TT1016);
+
+(* Rung 68 *)
+TT2016 := (TT2016 * 150.0) / 3200.0;
+
+(* Rung 69 *)
+(*
+ * Block Instruction Analysis: MOVE_INT
+ * Source: TT1016 (after conversion from REAL)
+ * Destination: TMPR3 (%R00485)
+*)
+TT1016 := REAL_TO_INT(TT2016);
+TMPR3 := TT1016;
+
+(* Rung 70 *)
+(* This rung is disabled. *)
+
+(* Rung 71 *)
+R00493 := INT_TO_REAL(TT1015);
+
+(* Rung 72 *)
+R00493 := (R00493 * 150.0) / 3200.0;
+
+(* Rung 73 *)
+(*
+ * Block Instruction Analysis: MOVE_INT
+ * Source: TT1015 (after conversion from REAL)
+ * Destination: TMPR1 (%R00468)
+*)
+TT1015 := REAL_TO_INT(R00493);
+TMPR1 := TT1015;
+
+(* Rung 74: COMMENT0 *)
+
+(* Rung 75: CONF STER BARREL No1 *)
+IF PRES_ST[2] > 0 THEN
+    CNF_BR1 := TRUE;
+END_IF;
+
+(* Rung 76: CNF_BR2 *)
+IF BRL2_NM > 0 THEN
+    CNF_BR2 := TRUE;
+END_IF;
+
+(* Rung 77: pressure sterilisation *)
+PRES_ST[7] := R00452[0];
+
+(* Rung 78: pressure sterilisation *)
+PRES_ST[8] := BR3_NM;
+
+(* Rung 79 *)
+IF PRES_ST[2] >= 32000 THEN
+    PRES_ST[2] := 32000;
+END_IF;
+
+(* Rung 80 *)
+IF BRL2_NM >= 32000 THEN
+    BRL2_NM := 32000;
+END_IF;
+
+(* Rung 81 *)
+IF BR3_NM >= 32000 THEN
+    BR3_NM := 32000;
+END_IF;
+
+(* Rung 82 *)
+(* This rung is disabled. *)
+
+(* Rung 83: CNF_BR3 *)
+IF PRES_ST[8] > 0 THEN
+    CNF_BR3 := TRUE;
+END_IF;
+
+(* Rung 84: EN_SIP_SEQ *)
+IF N2_END OR PB_Stop_SIP OR STP_STL OR STP_TS THEN
+    BLK_CLR_WORD(IN := PRES_ST, LEN := 9);
+    STERIL := FALSE;
+    NITROGN := FALSE;
+    N2_FULL := FALSE;
+    EN_SIP_SEQ := TRUE;
+END_IF;
+
+(* Rung 85 *)
+DLT_CND := C_45CLC - COND_45;
+ALM_CND := DLT_CND > 25;
+
+(* Rung 86: CIP C in alarm state. *)
+IF ALM_CND THEN
+    C_ALARM := TRUE;
+END_IF;
+
+(* Rung 87 *)
+(*
+ * Block Instruction Analysis: BLK_CLR_WORD
+ * Destination: #ANY_FLT (%SC0009)
+ * Length: 1 WORD
+*)
+IF M00260 THEN
+    BLK_CLR_WORD(IN := #ANY_FLT, LEN := 1);
+END_IF;
+
+(* Rung 88: COMMENT1 *)
+
+(* Rung 89 *)
+IF (ST_STRL OR ST2STRL OR ST_SCR OR PB_Start_SIP) AND (NOT SRT_OK) THEN
+    FL_STR := TRUE;
+END_IF;
+
+(* Rung 90: STERILISATION VALVE STEAM *)
+IF FL_STR AND (NOT TIMEOVR) THEN
+    XVM042 := TRUE;
+END_IF;
+
+(* Rung 91 *)
+IF (NOT SRT_OK) AND FL_STR AND (NOT NITROGN) AND (PRES_ST[0] >= 1100) THEN
+    MV4075 := TRUE;
+END_IF;
+
+(* Rung 92: sterill over time *)
+CTD_Rung92(CD := (MV4075 AND MIN_PLS), R := (SRT_OK OR (NOT #ALW_OFF)), PV := 20);
+TIMEOVR := CTD_Rung92.ENO;
+
+(* Rung 93 *)
+IF TIMEOVR THEN
+    SRT_OK := TRUE;
+END_IF;
+
+(* Rung 94 *)
+IF TIMEOVR OR PB_Stop_SIP THEN
+    FL_STR := FALSE;
+    MV4075 := FALSE;
+END_IF;
+
+(* Rung 95 *)
+IF TIME = 1439 THEN
+    (* Continuation *)
+END_IF;
+
+(* Rung 96 *)
+IF TIME = 1439 THEN
+    SRT_OK := FALSE;
+    STR_TIM[0] := 20;
+END_IF;
+
+(* Rung 97 *)
+(* This rung contains complex logic that appears to always be false due to contradictory conditions and is omitted. *)
+
+(* Rung 98: COMMENT2 *)
+
+(* Rung 99 *)
+IF MIN_PLS THEN
+    TIME := TIME + 1;
+END_IF;
+IF MIN_PLS AND (TIME = 1440) THEN
+    TIME := 0;
+END_IF;
+
+(* Rung 100 *)
+CTU_Rung96(CU := MIN_PLS, R := M00277, PV := 2);
+M00277 := CTU_Rung96.ENO;
+
+(* Rung 101 *)
+(*
+ * Block Instruction Analysis: MOVE_INT
+ * Source: CLOCK (%R07007)
+ * Destination: R00510 (%R00510)
+*)
+IF MIN_PLS THEN
+    R00510 := CLOCK;
+END_IF;
+
+(* Rung 102 *)
+(*
+ * Block Instruction Analysis: MOVE_INT
+ * Source: R00510 (%R00510)
+ * Destination: R00514 (%R00514)
+*)
+IF M00277 THEN
+    R00514 := R00510;
+END_IF;
+
+(* Rung 103 *)
+M00278 := R00510 > R00514;
+
+(* Rung 104 *)
+(*
+ * Block Instruction Analysis: MOVE_INT
+ * Source: CLOCK (%R07007)
+ * Destination: TIME (%R00479)
+*)
+IF M00278 AND (CLOCK <> TIME) THEN
+    TIME := CLOCK;
+END_IF;

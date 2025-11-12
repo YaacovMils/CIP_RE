@@ -1,0 +1,586 @@
+(*
+* @purpose: Manages EGD (Ethernet Global Data) communication for the "E" portion of the CIP process.
+*           This file is a central hub for handling data exchange with two external controllers,
+*           referred to as R30 (Cooker) and R40. It performs two main functions:
+*           1. **Receiving (Rx):** Unpacks WORD registers from R30 and R40 into individual BOOL tags representing commands, status signals, and step information.
+*           2. **Transmitting (Tx):** Packs local status information (faults, step number, timers) into WORD registers to be sent back to the external controllers.
+* @platform: GE/Emerson RX3i PLC
+* @language: Structured Text (ST)
+*
+* @inputs:
+*   Rx1_Cooker_Bits_R30 (%R09800) (INT): Packed BOOL data from the R30 controller.
+*   Rx1_Cooker_Step_R30 (%R09801) (WORD): Current step number from the R30 controller's sequence.
+*   Rx3_CipType_R30 (%R09802) (INT): The selected CIP type from the R30 controller.
+*   Rx4_VolSP_R30 (%R09803) (REAL): Volume setpoint from the R30 controller.
+*   Rx5_TimeSP_R30 (%R09805) (INT): Time setpoint from the R30 controller.
+*   Rx1_R40_Bits (%R09900) (WORD): Packed BOOL data from the R40 controller.
+*   Rx1_R40_Step (%R09901) (WORD): Current step number from the R40 controller's sequence.
+*   E_Steper (%R09251) (INT): Current step of the local "E" CIP sequence.
+*   MonitorAct_R30 (%R09256) (INT): Elapsed time of the current step timer for the "E" sequence.
+*   MonitorPre_R30 (%R09257) (INT): Preset time for the current step timer for the "E" sequence.
+*
+* @outputs:
+*   Tx_Step_CIP_D_E (%R09520) (INT): The current local "E" sequence step number, packed for transmission.
+*   Tx_MonitorAct_CIP_D_E (%R09521) (INT): The elapsed step time, packed for transmission.
+*   Tx_MonitorPre_CIP_D_E (%R09522) (INT): The preset step time, packed for transmission.
+*   Tx_FIT207_CIP_D_E (%R09523) (REAL): The current flow rate from FIT207, packed for transmission.
+*   Tx_Word_Bits_CIP_D_E (%R09525) (WORD): Packed BOOL status data for transmission.
+*   (Numerous %G and %M tags): Unpacked bits from R30/R40 used as interlocks and commands throughout the "E" sequence logic.
+*
+* @notes: This file is critical for coordinating the local "E" CIP sequence with external systems. It decodes
+*         step information from R30/R40 into a series of boolean flags (e.g., R30_S110, R40_S120) that drive
+*         the logic in other blocks.
+*)
+VAR_GLOBAL
+	_T_SEC AT %S00005 : BOOL; (* 1.0 second timer contact *)
+	CIP_E_Ended AT %M01327 : BOOL;
+	CIP_E_FarmeCondition AT %M01320 : BOOL;
+	CIP_Rinsing_R30 AT %M01351 : BOOL;
+	E_Farm_FLT AT %M01640 : BOOL; (* General Fault CIP E *)
+	E_Steper AT %R09251 : INT;
+	FQ207 AT %R09280 : INT;
+	FS_207 AT %M01553 : BOOL;
+	Live_Bit_R31 AT %M01808 : BOOL;
+	MonitorAct_R30 AT %R09256 : INT; (* Setp_Time_Actual Count *)
+	MonitorPre_R30 AT %R09257 : INT; (* Monitoring Preset Time *)
+	P4269_Run AT %M01555 : BOOL;
+	R30_CIP_Running AT %M03001 : BOOL;
+	R30_S110 AT %G00010 : BOOL;
+	R30_S111 AT %G00011 : BOOL;
+	R30_S112 AT %G00012 : BOOL;
+	R30_S113 AT %G00013 : BOOL;
+	R30_S114 AT %G00014 : BOOL;
+	R30_S120 AT %G00020 : BOOL;
+	R30_S121 AT %G00021 : BOOL;
+	R30_S122 AT %G00022 : BOOL;
+	R30_S123 AT %G00023 : BOOL;
+	R30_S130 AT %G00030 : BOOL;
+	R30_S131 AT %G00031 : BOOL;
+	R30_S132 AT %G00032 : BOOL;
+	R30_S133 AT %G00033 : BOOL;
+	R30_S140 AT %G00040 : BOOL;
+	R30_S141 AT %G00041 : BOOL;
+	R30_S142 AT %G00042 : BOOL;
+	R30_S150 AT %G00050 : BOOL;
+	R30_S151 AT %G00051 : BOOL;
+	R30_S152 AT %G00052 : BOOL;
+	R30_S153 AT %G00053 : BOOL;
+	R30_S154 AT %G00054 : BOOL;
+	R30_S160 AT %G00060 : BOOL;
+	R30_S161 AT %G00061 : BOOL;
+	R30_S162 AT %G00062 : BOOL;
+	R30_S163 AT %G00063 : BOOL;
+	R30_S170 AT %G00070 : BOOL;
+	R30_S171 AT %G00071 : BOOL;
+	R30_S172 AT %G00072 : BOOL;
+	R30_S173 AT %G00073 : BOOL;
+	R30_S180 AT %G00080 : BOOL;
+	R30_S181 AT %G00081 : BOOL;
+	R30_S182 AT %G00082 : BOOL;
+	R30_S183 AT %G00083 : BOOL;
+	R40_CIP_Running AT %M03002 : BOOL; (* Reactor 40 CIP Running *)
+	R40_Live_Bit AT %M01907 : BOOL; (* Signal From R40 *)
+	R40_S110 AT %M03010 : BOOL;
+	R40_S111 AT %M03011 : BOOL;
+	R40_S112 AT %M03012 : BOOL;
+	R40_S113 AT %M03013 : BOOL;
+	R40_S114 AT %M03014 : BOOL;
+	R40_S120 AT %M03020 : BOOL;
+	R40_S121 AT %M03021 : BOOL;
+	R40_S122 AT %M03022 : BOOL;
+	R40_S123 AT %M03023 : BOOL;
+	R40_S130 AT %M03030 : BOOL;
+	R40_S131 AT %M03031 : BOOL;
+	R40_S132 AT %M03032 : BOOL;
+	R40_S133 AT %M03033 : BOOL;
+	R40_S140 AT %M03040 : BOOL;
+	R40_S141 AT %M03041 : BOOL;
+	R40_S142 AT %M03042 : BOOL;
+	R40_S143 AT %M03043 : BOOL;
+	Rx1_Cooker_Bits_R30 AT %R09800 : INT; (* Signal From Cooker *)
+	Rx1_Cooker_Step_R30 AT %R09801 : WORD; (* Signal From Cooker *)
+	Rx1_R40_Bits AT %R09900 : WORD;
+	Rx1_R40_Step AT %R09901 : WORD;
+	Rx3_CipType_R30 AT %R09802 : INT; (* Signal From Cooker R30 *)
+	Rx3_R40_CipType AT %R09902 : INT;
+	Rx4_VolSP_R30 AT %R09803 : REAL; (* Signal From Cooker R30 *)
+	Rx4_VolSP_R40 AT %R09903 : REAL;
+	Rx5_TimeSP_R30 AT %R09805 : INT; (* Signal From Cooker R30 *)
+	Rx5_TimeSP_R40 AT %R09905 : INT;
+	Rx_Abord_R30 AT %M01810 : BOOL;
+	Rx_CipNoFlood_R30 AT %M01811 : BOOL;
+	Rx_Cooker_Fault_R30 AT %M01805 : BOOL; (* Signal From Cooker *)
+	Rx_Cooker_Switch_R30 AT %M01807 : BOOL;
+	Rx_Hold_CIP_Pump_R30 AT %M01802 : BOOL;
+	Rx_Hold_E_SEQ_R30 AT %M01803 : BOOL; (* Signal From Cooker *)
+	Rx_LL1_R31 AT %M01801 : BOOL; (* Signal From Cooker *)
+	Rx_R40_Abord AT %M01909 : BOOL; (* Signal From R40 *)
+	Rx_R40_Bit0 AT %M01900 : BOOL; (* Signal From R40 *)
+	Rx_R40_Bit11 AT %M01911 : BOOL; (* Signal From R40 *)
+	Rx_R40_Bit12 AT %M01912 : BOOL; (* Signal From R40 *)
+	Rx_R40_Bit13 AT %M01913 : BOOL; (* Signal From R40 *)
+	Rx_R40_Bit14 AT %M01914 : BOOL; (* Signal From R40 *)
+	Rx_R40_Bit15 AT %M01915 : BOOL; (* Signal From R40 *)
+	Rx_R40_CipNoFlood AT %M01910 : BOOL; (* Signal From R40 *)
+	Rx_R40_Cooker_Switch AT %M01906 : BOOL; (* Signal From R40 *)
+	Rx_R40_Fault AT %M01904 : BOOL; (* Signal From R40 *)
+	Rx_R40_Hold_CIP_Pump AT %M01901 : BOOL; (* Signal From R40 *)
+	Rx_R40_Hold_E_SEQ AT %M01902 : BOOL; (* Signal From R40 *)
+	Rx_R40_Reset_SEQ AT %M01908 : BOOL; (* Signal From R40 *)
+	Rx_R40_RST AT %M01905 : BOOL; (* Signal From R40 *)
+	Rx_R40_Start_CIP_E AT %M01903 : BOOL; (* Signal From R40 *)
+	Rx_Reset_SEQ_R30 AT %M01809 : BOOL;
+	Rx_RST_R30 AT %M01806 : BOOL;
+	Rx_Start_CIP_E AT %M01804 : BOOL; (* Signal From Cooker *)
+	Tanks_Error_E AT %M01329 : BOOL; (* Tanks Not Available *)
+	Tx_Bit_R30 AT %M01777 : ARRAY [0..16] OF BOOL; (* Signal To R30/40 *)
+	Tx_FIT207_CIP_D_E AT %R09523 : REAL; (* Signal To R30/40 *)
+	Tx_MonitorAct_CIP_D_E AT %R09521 : INT; (* Signal To R30/40 *)
+	Tx_MonitorPre_CIP_D_E AT %R09522 : INT; (* Signal To R30/40 *)
+	Tx_Step_CIP_D_E AT %R09520 : INT; (* Signal To R30/40 *)
+	Tx_Word_Bits_CIP_D_E AT %R09525 : WORD; (* Signal To R30/40 *)
+	VolSP_E AT %R09281 : REAL; (* xxx Liters *)
+	XV4281_O AT %M01551 : BOOL;
+END_VAR
+
+(* Rung 1 *)
+(*
+**********************************************
+Rx   R30
+**********************************************
+*)
+
+(* Rung 2 *)
+(* Signals From Cooker   R30 *)
+
+(* Rung 3 *)
+(* ********************************************** *)
+
+(* Rung 4 *)
+(* R30 *)
+
+(* Rung 5 *)
+(* Signal From Cooker *)
+(*
+----------------------------------------------------------------
+Instruction Analysis (MOVE_BOOL):
+- Type: Bit-wise Block Move
+- Source: Rx1_Cooker_Bits_R30 (at %R09800)
+- Destination: Starts at Rx_LL1_R31 (at %M01801)
+- Length: 16 bits
+- Address Range Read: 1 word from %R09800 to %R09800
+- Address Range Written: 16 bits from %M01801 to %M01816
+----------------------------------------------------------------
+Rx_LL1_R31           := Rx1_Cooker_Bits_R30.%X0;
+Rx_Hold_CIP_Pump_R30 := Rx1_Cooker_Bits_R30.%X1;
+Rx_Hold_E_SEQ_R30    := Rx1_Cooker_Bits_R30.%X2;
+Rx_Start_CIP_E       := Rx1_Cooker_Bits_R30.%X3;
+Rx_Cooker_Fault_R30  := Rx1_Cooker_Bits_R30.%X4;
+Rx_RST_R30           := Rx1_Cooker_Bits_R30.%X5;
+Rx_Cooker_Switch_R30 := Rx1_Cooker_Bits_R30.%X6;
+Live_Bit_R31         := Rx1_Cooker_Bits_R30.%X7;
+Rx_Reset_SEQ_R30     := Rx1_Cooker_Bits_R30.%X8;
+Rx_Abord_R30         := Rx1_Cooker_Bits_R30.%X9;
+Rx_CipNoFlood_R30    := Rx1_Cooker_Bits_R30.%X10;
+Rx_Bit11_R30         := Rx1_Cooker_Bits_R30.%X11;
+Rx_Bit12_R30 		 := Rx1_Cooker_Bits_R30.%X12;
+Rx_Bit13_R30 		 := Rx1_Cooker_Bits_R30.%X13;
+Rx_Bit14_R30 		 := Rx1_Cooker_Bits_R30.%X14;
+Rx_Bit15_R30 		 := Rx1_Cooker_Bits_R30.%X15;
+
+(* Rung 6 *)
+(*
+----------------------------------------------------------------
+NOTE: The original logic from this rung is documented below but
+has been commented out. In the source ladder logic, the final
+result of the boolean expression is not assigned to any output
+variable (coil), meaning the result is calculated and then
+discarded. To prevent a syntax error in ST, which requires every
+expression to be assigned to a variable, the logic is preserved
+here for documentation purposes only.
+----------------------------------------------------------------
+
+(*
+(Rx_LL1_R31 AND Rx_Hold_CIP_Pump_R30 AND Rx_Hold_E_SEQ_R30 AND Rx_Start_CIP_E)
+OR (Rx_Cooker_Fault_R30 AND Rx_RST_R30 AND Rx_Cooker_Switch_R30 AND Live_Bit_R31)
+OR (Rx_Reset_SEQ_R30 AND Rx_Abord_R30 AND Rx_CipNoFlood_R30);
+*)
+*)
+
+(* Rung 7 *)
+(* %R9651  Signal From Cooker Step No       >>>>>R9801          R30 *)
+
+(* Rung 8 *)
+(* Signal From Cooker *)
+
+Rx1_Cooker_Step_R30 := Rx1_Cooker_Step_R30;
+
+(* Rung 9 *)
+R30_CIP_Running := (Rx1_Cooker_Step_R30 >= 101) AND (Rx1_Cooker_Step_R30 <= 189);
+
+(* Rung 10 *)
+R30_S110 := (Rx1_Cooker_Step_R30 = 110);
+
+(* Rung 11 *)
+R30_S111 := (Rx1_Cooker_Step_R30 = 111);
+
+(* Rung 12 *)
+R30_S112 := (Rx1_Cooker_Step_R30 = 112);
+
+(* Rung 13 *)
+R30_S113 := (Rx1_Cooker_Step_R30 = 113);
+
+(* Rung 14 *)
+R30_S114 := (Rx1_Cooker_Step_R30 = 114);
+
+(* Rung 15 *)
+R30_S120 := (Rx1_Cooker_Step_R30 = 120);
+
+(* Rung 16 *)
+R30_S121 := (Rx1_Cooker_Step_R30 = 121);
+
+(* Rung 17 *)
+R30_S122 := (Rx1_Cooker_Step_R30 = 122);
+
+(* Rung 18 *)
+R30_S123 := (Rx1_Cooker_Step_R30 = 123);
+
+(* Rung 19 *)
+R30_S130 := (Rx1_Cooker_Step_R30 = 130);
+
+(* Rung 20 *)
+R30_S131 := (Rx1_Cooker_Step_R30 = 131);
+
+(* Rung 21 *)
+R30_S132 := (Rx1_Cooker_Step_R30 = 132);
+
+(* Rung 22 *)
+R30_S133 := (Rx1_Cooker_Step_R30 = 133);
+
+(* Rung 23 *)
+R30_S140 := (Rx1_Cooker_Step_R30 = 140);
+
+(* Rung 24 *)
+R30_S141 := (Rx1_Cooker_Step_R30 = 141);
+
+(* Rung 25 *)
+R30_S142 := (Rx1_Cooker_Step_R30 = 142);
+
+(* Rung 26 *)
+R30_S150 := (Rx1_Cooker_Step_R30 = 150);
+
+(* Rung 27 *)
+R30_S151 := (Rx1_Cooker_Step_R30 = 151);
+
+(* Rung 28 *)
+R30_S152 := (Rx1_Cooker_Step_R30 = 152);
+
+(* Rung 29 *)
+R30_S153 := (Rx1_Cooker_Step_R30 = 153);
+
+(* Rung 30 *)
+R30_S154 := (Rx1_Cooker_Step_R30 = 154);
+
+(* Rung 31 *)
+R30_S160 := (Rx1_Cooker_Step_R30 = 160);
+
+(* Rung 32 *)
+R30_S161 := (Rx1_Cooker_Step_R30 = 161);
+
+(* Rung 33 *)
+R30_S162 := (Rx1_Cooker_Step_R30 = 162);
+
+(* Rung 34 *)
+R30_S163 := (Rx1_Cooker_Step_R30 = 163);
+
+(* Rung 35 *)
+R30_S170 := (Rx1_Cooker_Step_R30 = 170);
+
+(* Rung 36 *)
+R30_S171 := (Rx1_Cooker_Step_R30 = 171);
+
+(* Rung 37 *)
+R30_S172 := (Rx1_Cooker_Step_R30 = 172);
+
+(* Rung 38 *)
+R30_S173 := (Rx1_Cooker_Step_R30 = 173);
+
+(* Rung 39 *)
+R30_S180 := (Rx1_Cooker_Step_R30 = 180);
+
+(* Rung 40 *)
+R30_S181 := (Rx1_Cooker_Step_R30 = 181);
+
+(* Rung 41 *)
+R30_S182 := (Rx1_Cooker_Step_R30 = 182);
+
+(* Rung 42 *)
+R30_S183 := (Rx1_Cooker_Step_R30 = 183);
+
+(* Rung 43 *)
+(* %R9652 Signal From Cooker CIP Type         R30 *)
+
+(* Rung 44 *)
+(* Signal From Cooker R30 *)
+
+Rx3_CipType_R30 := Rx3_CipType_R30;
+
+(* Rung 45 *)
+(* %R9653-4 Signal From Cooker  SP_Volume           R30 *)
+
+(* Rung 46 *)
+(* xxx Liters *)
+IF R30_CIP_Running THEN
+    VolSP_E := Rx4_VolSP_R30;
+END_IF;
+
+(* Rung 47 *)
+(* %R9655 Signal From Cooker  SP_Time         R30 *)
+
+(* Rung 48 *)
+(* Signal From Cooker R30 *)
+Rx5_TimeSP_R30 := Rx5_TimeSP_R30;
+
+(* Rung 49 *)
+(*
+**********************************************
+Rx            R40        R40               R40
+**********************************************
+*)
+
+(* Rung 50 *)
+(* Signals From   R40 *)
+
+(* Rung 51 *)
+(* ********************************************** *)
+
+(* Rung 52 *)
+(* R40        R40               R40 *)
+
+(* Rung 53 *)
+(* This loop emulates a MOVE_BOOL instruction by copying each bit
+   from the source WORD/INT to a consecutive block of BOOLs. *)
+(* MOVE_BOOL expanded without loop - R40 Bits *)
+Rx_R40_Bit0 		 := Rx1_R40_Bits.%X0;
+Rx_R40_Hold_CIP_Pump := Rx1_R40_Bits.%X1;
+Rx_R40_Hold_E_SEQ 	 := Rx1_R40_Bits.%X2;
+Rx_R40_Start_CIP_E 	 := Rx1_R40_Bits.%X3;
+Rx_R40_Fault 		 := Rx1_R40_Bits.%X4;
+Rx_R40_RST 			 := Rx1_R40_Bits.%X5;
+Rx_R40_Cooker_Switch := Rx1_R40_Bits.%X6;
+R40_Live_Bit 		 := Rx1_R40_Bits.%X7;
+Rx_R40_Reset_SEQ 	 := Rx1_R40_Bits.%X8;
+Rx_R40_Abord 		 := Rx1_R40_Bits.%X9;
+Rx_R40_CipNoFlood 	 := Rx1_R40_Bits.%X10;
+Rx_R40_Bit11 		 := Rx1_R40_Bits.%X11;
+Rx_R40_Bit12  		 := Rx1_R40_Bits.%X12;
+Rx_R40_Bit13  		 := Rx1_R40_Bits.%X13;
+Rx_R40_Bit14  		 := Rx1_R40_Bits.%X14;
+Rx_R40_Bit15  		 := Rx1_R40_Bits.%X15;
+
+(* Rung 54 *)
+(*
+----------------------------------------------------------------
+NOTE: The original logic from this rung is documented below but
+has been commented out. In the source ladder logic, the final
+result of the boolean expression is not assigned to any output
+variable (coil), meaning the result is calculated and then
+discarded. To prevent a syntax error in ST, which requires every
+expression to be assigned to a variable, the logic is preserved
+here for documentation purposes only.
+----------------------------------------------------------------
+
+(*
+(Rx_R40_Bit0 AND Rx_R40_Hold_CIP_Pump AND Rx_R40_Hold_E_SEQ AND Rx_R40_Start_CIP_E)
+OR (Rx_R40_Fault AND Rx_R40_RST AND Rx_R40_Cooker_Switch AND R40_Live_Bit)
+OR (Rx_R40_Reset_SEQ AND Rx_R40_Abord AND Rx_R40_CipNoFlood AND Rx_R40_Bit11)
+OR (Rx_R40_Bit12 AND Rx_R40_Bit13 AND Rx_R40_Bit14 AND Rx_R40_Bit15);
+*)
+*)
+
+(* Rung 55 *)
+(* R40        R40               R40       Signal From Cooker Step No       >>>>>R9901 *)
+
+(* Rung 56 *)
+Rx1_R40_Step := Rx1_R40_Step;
+
+(* Rung 57 *)
+(* Reactor 40 CIP Running *)
+R40_CIP_Running := (Rx1_R40_Step >= 110) AND (Rx1_R40_Step <= 144);
+
+(* Rung 58 *)
+R40_S110 := (Rx1_R40_Step = 110);
+
+(* Rung 59 *)
+R40_S111 := (Rx1_R40_Step = 111);
+
+(* Rung 60 *)
+R40_S112 := (Rx1_R40_Step = 112);
+
+(* Rung 61 *)
+R40_S113 := (Rx1_R40_Step = 113);
+
+(* Rung 62 *)
+R40_S114 := (Rx1_R40_Step = 114);
+
+(* Rung 63 *)
+R40_S120 := (Rx1_R40_Step = 120);
+
+(* Rung 64 *)
+R40_S121 := (Rx1_R40_Step = 121);
+
+(* Rung 65 *)
+R40_S122 := (Rx1_R40_Step = 122);
+
+(* Rung 66 *)
+R40_S123 := (Rx1_R40_Step = 123);
+
+(* Rung 67 *)
+R40_S130 := (Rx1_R40_Step = 130);
+
+(* Rung 68 *)
+R40_S131 := (Rx1_R40_Step = 131);
+
+(* Rung 69 *)
+R40_S132 := (Rx1_R40_Step = 132);
+
+(* Rung 70 *)
+R40_S133 := (Rx1_R40_Step = 133);
+
+(* Rung 71 *)
+R40_S140 := (Rx1_R40_Step = 140);
+
+(* Rung 72 *)
+R40_S141 := (Rx1_R40_Step = 141);
+
+(* Rung 73 *)
+R40_S142 := (Rx1_R40_Step = 142);
+
+(* Rung 74 *)
+R40_S143 := (Rx1_R40_Step = 143);
+
+(* Rung 75 *)
+(* R40        R40               R40            Signal From  R40 CIP Type *)
+
+(* Rung 76 *)
+Rx3_R40_CipType := Rx3_R40_CipType;
+
+(* Rung 77 *)
+(* R40        R40               R40              Signal From R40  SP_Volume *)
+
+(* Rung 78 *)
+(* xxx Liters *)
+IF R40_CIP_Running THEN
+    VolSP_E := Rx4_VolSP_R40;
+END_IF;
+
+(* Rung 79 *)
+(* %R9655 Signal From Cooker  SP_Time *)
+
+(* Rung 80 *)
+Rx5_TimeSP_R40 := Rx5_TimeSP_R40;
+
+(* Rung 81 *)
+(*
+***************************************************************************
+Tx         Tx       Tx       Tx
+***************************************************************************
+
+***************************************************************************
+Tx         Tx             Tx    Tx
+***************************************************************************
+*)
+
+(* Rung 83 *)
+(* **********************************************
+Signals To    R30 & R40
+********************************************** *)
+
+(* Rung 84 *)
+(* Signal To R30/40 *)
+Tx_Step_CIP_D_E := E_Steper;
+Tx_MonitorAct_CIP_D_E := MonitorAct_R30;
+
+(* Rung 85 *)
+(* Empty Rung *)
+
+(* Rung 86 *)
+(* Signal To R30/40 *)
+Tx_MonitorPre_CIP_D_E := MonitorPre_R30;
+Tx_FIT207_CIP_D_E := INT_TO_REAL(FQ207);
+
+(* Rung 87 *)
+(*
+	BIT0-Farm Fault To Cooker  |
+	BIT1- CIP_Ended  |
+	BIT2-Farme Condition |
+	BIT3- T_SEC
+	BIT4- Live Bit |
+	BIT5-  XV4281_O |
+	BIT6-P4269_Run |
+	BIT7-FS_206
+	BIT8-
+	BIT9-
+	BIT10-
+	BIT11-
+	BIT12-
+	BIT13
+	BIT14
+	BIT15
+*)
+
+(* Rung 88 *)
+(* Signal To R30/40 *)
+Tx_Bit_R30[0] := E_Farm_FLT;
+
+(* Rung 89 *)
+(* Signal To R30/40 *)
+Tx_Bit_R30[1] := CIP_E_Ended;
+
+(* Rung 90 *)
+(* Signal To R30/40 *)
+Tx_Bit_R30[2] := CIP_E_FarmeCondition;
+
+(* Rung 91 *)
+(* Signal To R30/40 *)
+Tx_Bit_R30[3] := _T_SEC;
+
+(* Rung 92 *)
+(* Signal To R30/40 *)
+Tx_Bit_R30[4] := CIP_Rinsing_R30;
+
+(* Rung 93 *)
+(* Signal To R30/40 *)
+Tx_Bit_R30[5] := XV4281_O;
+
+(* Rung 94 *)
+(* Signal To R30/40 *)
+Tx_Bit_R30[6] := P4269_Run;
+
+(* Rung 95 *)
+(* Signal To R30/40 *)
+Tx_Bit_R30[7] := FS_207;
+
+(* Rung 96 *)
+(* Signal To R30/40 *)
+Tx_Bit_R30[8] := Tanks_Error_E;
+
+(* Rung 97 *)
+(* Signal To R30/40 *)
+
+Tx_Word_Bits_CIP_D_E.%X0 := Tx_Bit_R30[0];
+Tx_Word_Bits_CIP_D_E.%X1 := Tx_Bit_R30[1];
+Tx_Word_Bits_CIP_D_E.%X2 := Tx_Bit_R30[2];
+Tx_Word_Bits_CIP_D_E.%X3 := Tx_Bit_R30[3];
+Tx_Word_Bits_CIP_D_E.%X4 := Tx_Bit_R30[4];
+Tx_Word_Bits_CIP_D_E.%X5 := Tx_Bit_R30[5];
+Tx_Word_Bits_CIP_D_E.%X6 := Tx_Bit_R30[6];
+Tx_Word_Bits_CIP_D_E.%X7 := Tx_Bit_R30[7];
+Tx_Word_Bits_CIP_D_E.%X8 := Tx_Bit_R30[8];
+Tx_Word_Bits_CIP_D_E.%X9 := Tx_Bit_R30[9];
+Tx_Word_Bits_CIP_D_E.%X10 := Tx_Bit_R30[10];
+Tx_Word_Bits_CIP_D_E.%X11 := Tx_Bit_R30[11];
+Tx_Word_Bits_CIP_D_E.%X12 := Tx_Bit_R30[12];
+Tx_Word_Bits_CIP_D_E.%X13 := Tx_Bit_R30[13];
+Tx_Word_Bits_CIP_D_E.%X14 := Tx_Bit_R30[14];
+Tx_Word_Bits_CIP_D_E.%X15 := Tx_Bit_R30[15];

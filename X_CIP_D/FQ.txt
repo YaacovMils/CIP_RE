@@ -1,0 +1,54 @@
+(*!
+@purpose
+This program (`FQ.txt`) acts as a flow totalizer for the "CIP D" line. Its primary function is to count pulses from the flow meter (FIT-107) and accumulate the total volume of liquid delivered during the filling stages of the CIP sequence.
+
+The logic is designed to:
+1.  Detect the rising edge of each pulse from the flow meter to ensure each pulse is counted only once.
+2.  Increment a counter (`FIT107_Count`) by a fixed amount (10, presumably representing 10 liters per pulse) for each pulse that occurs while the system is in an active filling step.
+3.  Automatically reset the counter to zero when the system is not in a filling step.
+
+This accumulated volume is a critical process variable used by the main sequencer (`D_STRCT.txt`) to know when a target fill volume has been reached.
+
+@inputs
+- `FIT_107_PLS` (%M00556) (BOOL): The boolean signal representing a single pulse from the flow meter.
+- `D_Step1`, `D_Step21`, `D_Step41`, `D_Step61`, `D_Step81` (BOOL): Active step flags corresponding to the main filling step of each cleaning phase.
+
+@outputs
+- `FIT107_Count` (%R09130) (INT): An integer that accumulates the total calculated volume (in liters) for the current filling operation.
+- `FIT_107_Once` (%M00361) (BOOL): A temporary one-shot flag that is TRUE for a single scan upon the rising edge of a new flow meter pulse.
+
+@notes
+- This code is for a GE/Emerson RX3i PLC and is written in Structured Text (ST).
+- The use of a rising-edge trigger (`R_TRIG`) is essential for accurately counting pulses in a PLC, as it prevents a single, long pulse from being counted multiple times across several scans.
+- The logic effectively creates a conditional counter that only accumulates volume during specific, pre-defined steps of the manufacturing process.
+*)
+VAR_GLOBAL
+    D_Step1 AT %M00401 : BOOL; (* Line D *)
+    D_Step21 AT %M00421 : BOOL; (* Line D *)
+    D_Step41 AT %M00441 : BOOL; (* Line D *)
+    D_Step61 AT %M00461 : BOOL; (* Line D *)
+    D_Step81 AT %M00481 : BOOL; (* Line D *)
+    FIT107_Count AT %R09130 : INT;
+    FIT_107_Once AT %M00361 : BOOL;
+    FIT_107_PLS AT %M00556 : BOOL; (* Pulse=10 Liter *)
+	PLS_RTRIG : RTRIG;
+END_VAR
+
+VAR
+    Rung1_EdgeDetector : BOOL := FALSE; (* Helper variable for rising edge detection in Rung 1 *)
+END_VAR
+
+(* Rung 1 *)
+PLS_RTRIG(CLK := FIT_107_PLS);
+FIT_107_Once := PLS_RTRIG.Q;
+
+
+(* Rung 2 *)
+IF (D_Step1 OR D_Step21 OR D_Step41 OR D_Step61 OR D_Step81) AND FIT_107_Once THEN
+    FIT107_Count := FIT107_Count + 10;
+END_IF;
+
+(* Rung 3 *)
+IF NOT D_Step1 AND NOT D_Step21 AND NOT D_Step41 AND NOT D_Step61 AND NOT D_Step81 THEN
+    FIT107_Count := 0;
+END_IF;

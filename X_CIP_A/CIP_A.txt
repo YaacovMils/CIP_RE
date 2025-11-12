@@ -1,0 +1,31 @@
+(*!
+@purpose
+This program (`CIP_A.txt`) serves as a master organizational routine for the entire Cleaning-In-Place (CIP) A-line process. It does not contain any direct process logic itself. Instead, its sole responsibility is to call the main sub-programs for Line A in the correct and deterministic sequence.
+
+The execution order is critical:
+1.  `A_CMD()`: First, the command handler is called to interpret any new commands from the operator or master sequencer. This determines which stage or action should be performed in the current scan.
+2.  `A_CIP()`: Second, the main process logic is executed. This program reads the flags set by `A_CMD` and controls the necessary pumps, valves, and timers to carry out the cleaning steps.
+3.  `A_U_ST()`: Finally, the status update routine is called. It reads the current state of all the Line A flags (after they've been processed by `A_CIP`) and compiles the final status word for communication to the HMI/SCADA.
+
+@inputs
+- This program has no direct inputs; it calls subroutines that interact with global variables.
+
+@outputs
+- This program has no direct outputs; it calls subroutines that interact with global variables.
+
+@notes
+- This code is for a GE/Emerson RX3i PLC and is written in Structured Text (ST).
+- This type of organizational block is a very common and effective practice in large PLC programs. It enforces a structured scan cycle, making the program's overall behavior easier to understand, debug, and maintain. It ensures that commands are always processed before the logic acts on them, and the status is always updated after the logic has completed for that scan.
+*)
+VAR_GLOBAL
+
+END_VAR
+
+(* Rung 1 *)
+A_CMD();
+
+(* Rung 2 *)
+A_CIP();
+
+(* Rung 3 *)
+A_U_ST();

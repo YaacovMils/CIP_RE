@@ -1,0 +1,37 @@
+(*!
+@purpose
+This program (`D_AQ.txt`) is responsible for scaling an analog output signal for the "CIP D" process area. It serves as the counterpart to `D_AI.txt`. Its function is to take a desired process value, provided as a floating-point number in engineering units (in this case, a percentage), and convert it into the raw integer format (0-32000) required by the PLC's analog output module (`%AQ`).
+
+This specific program scales a speed setpoint for the CIP D pump (P4169), allowing the control logic to work with an intuitive percentage value while the hardware receives the necessary raw integer.
+
+@inputs
+- `P4169_SC` (%R09150): The desired speed for the CIP D pump, provided as a REAL number from 0.0 to 100.0, representing the percentage of maximum speed.
+
+@outputs
+- `AQ0001` (%AQ0001): The raw integer value sent to the analog output module. This signal typically controls a Variable Frequency Drive (VFD) that modulates the pump's motor speed.
+
+@notes
+- This code is for a GE/Emerson RX3i PLC and is written in Structured Text (ST).
+- The calculation is a standard linear scaling operation, effectively the reverse of the scaling done for analog inputs.
+- The formula used is: `RawOutput = (Setpoint_Percent * 32000.0) / 100.0`.
+- A temporary REAL variable (`AQ_General_1`) is used to hold the intermediate calculation result before the final conversion to an integer.
+*)
+VAR_GLOBAL
+	AQ0001 AT %AQ0001 : INT; (* P4169_SC  CIP_D Pump  Speed Control *)
+	AQ_General_1 AT %R09202 : REAL;
+	P4169_SC AT %R09150 : REAL; (* CIP_D Pump  Speed Control  0-100% *)
+END_VAR
+
+(* Rung 1: COMMENT0 *)
+
+(* Rung 2 *)
+AQ_General_1 := P4169_SC;
+
+(* Rung 3 *)
+AQ_General_1 := AQ_General_1 * 32000.0;
+
+(* Rung 4 *)
+AQ_General_1 := AQ_General_1 / 100.0;
+
+(* Rung 5: P4169_SC  CIP_D Pump  Speed Control *)
+AQ0001 := REAL_TO_INT(AQ_General_1);

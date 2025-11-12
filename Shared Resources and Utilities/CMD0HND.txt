@@ -1,0 +1,66 @@
+(*!
+@purpose
+This program (`CMD0HND.txt`) functions as a dedicated command handler for manual operator interactions, typically originating from an HMI or SCADA interface. Its primary role is to decode a single integer command (`MMICMD`) that specifies a device and an action, allowing operators to place individual field devices into manual control, turn them on or off, or return them to automatic mode.
+
+The program works by parsing the `MMICMD` integer:
+- The thousands digit acts as the **command** (1=ON, 2=OFF, 3=AUTO).
+- The remaining digits act as the **device identifier**, which corresponds to a specific bit number in the status and command words.
+
+For example, a command of `1001` would mean "Turn ON device #1 and place it in manual mode."
+
+@inputs
+- `MMICMD` (%R00597): The raw integer command from the MMI. It is a composite value containing both the action and the target device ID. For example, `2004` means Action 2 (OFF) for Device 4.
+
+@outputs
+- `HND_STS` (%R09032): A WORD where each bit represents the Auto/Manual status of a corresponding device. A bit set to 1 means the device is in Manual mode; 0 means Auto.
+- `XV4001` (%Q00001): An example of a physical output that is controlled by this logic. In a full implementation, the device identifier would select one of many different outputs to control. This program sets the output TRUE for an ON command and FALSE for an OFF command.
+
+@notes
+- This code is for a GE/Emerson RX3i PLC and is written in Structured Text (ST).
+- The use of division and modulo arithmetic is an efficient way to unpack the command and device ID from a single register.
+- The logic uses bitwise operations (`OR SHL(...)`, `AND (NOT SHL(...))`) to manipulate individual bits within the `HND_STS` word, which is a standard and highly efficient technique in PLC programming.
+- Although only one output (`XV4001`) is shown, the structure of the logic is clearly designed to be extensible to control a large number of devices based on the identifier parsed from `MMICMD`.
+*)
+VAR_GLOBAL
+	HND_STS AT %R09032 : WORD; (* Hands status(1=Manual,0-Auto) *)
+	MMICMD AT %R00597 : INT; (* MMI command(hnds,b4activ,etc) *)
+	R00101 AT %R00101 : INT;
+	R00111 AT %R00111 : INT;
+	XV4001 AT %Q00001 : BOOL; (* WATER TO FRESH WATER TANK TO "O" *)
+END_VAR
+
+(* Rung 1 *)
+R00111 := MMICMD / 1000;
+R00101 := MMICMD MOD 1000;
+
+(*
+ * Block Instruction Analysis:
+ * The source logic uses proprietary GE instructions 'BIT_SET_WORD' and 'BIT_CLR_WORD'.
+ * These instructions manipulate a specific bit within a WORD variable, identified by a bit number.
+ * This translation implements their functionality using standard IEC 61131-3 operators:
+ *
+ * - 'BIT_SET_WORD(WordVar, BitNum)': Sets the specified bit.
+ * Translated to ST as: WordVar := WordVar OR SHL(WORD#1, BitNum);
+ * This creates a bit mask by shifting a '1' to the target position and then uses a bitwise OR to set the bit.
+ *
+ * - 'BIT_CLR_WORD(WordVar, BitNum)': Clears the specified bit.
+ * Translated to ST as: WordVar := WordVar AND (NOT SHL(WORD#1, BitNum));
+ * This creates a bit mask, inverts it (so only the target bit is '0'), and uses a bitwise AND to clear the bit.
+ *
+ * Additionally, these instructions were found targeting a BOOL variable (XV4001).
+ * In this context, they are interpreted as direct boolean assignments:
+ * - 'BIT_SET_WORD' on a BOOL is translated to ':= TRUE;'.
+ * - 'BIT_CLR_WORD' on a BOOL is translated to ':= FALSE;'.
+ *)
+CASE R00111 OF
+	1: (* Rung 4: Hands status(1=Manual,0-Auto) *)
+		HND_STS := HND_STS OR SHL(WORD#1, R00101);
+		XV4001 := TRUE;
+
+	2: (* Rung 3: Hands status(1=Manual,0-Auto) *)
+		HND_STS := HND_STS OR SHL(WORD#1, R00101);
+		XV4001 := FALSE;
+
+	3: (* Rung 2: Hands status(1=Manual,0-Auto) *)
+		HND_STS := HND_STS AND (NOT SHL(WORD#1, R00101));
+END_CASE;

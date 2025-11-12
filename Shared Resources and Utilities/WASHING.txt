@@ -1,0 +1,543 @@
+(*!
+@purpose
+This program (`WASHING.txt`) is a collection of miscellaneous, and largely independent, logic blocks that support the main CIP and barrel washing processes. Unlike other more focused programs, this file contains several distinct functionalities.
+
+The primary functions included are:
+1.  **"Drain All Tanks" Sequence:** A timed sequence that automatically opens the drain valves for each of the five main supply tanks (Fresh Water, Recovery Water, Acid, Soda 1, Soda 2) in a sequential order. Each valve is held open for 10 seconds. This is likely a maintenance or system purge function that runs on startup.
+2.  **Specialized Barrel Washing Sub-sequence:** A complex state machine that appears to be an auxiliary or alternative sequence for the barrel washing process. It uses a 6-position selector input to choose a routine, then executes a long series of timed and volume-based steps managed by an integer counter (`R00606`). This sequence seems to perform specific checks on tank levels and other conditions before automatically terminating the main barrel washing (`BR_WORK`) flag.
+3.  **Analog Input Scaling:** It contains logic to scale three analog inputs (`AI0017`, `AI0018`, `AI0019`) into their corresponding engineering units.
+4.  **Input Decoder:** A block of logic that decodes a 6-bit input (`I00106`-`I00111`) to determine which single line is selected, including error checking to ensure only one is active at a time.
+
+@inputs
+- Various digital inputs (`I*`) representing selector switches and device feedbacks.
+- Various analog inputs (`AI*`) for scaling.
+- Status flags from other programs, such as `BR_WORK`.
+- System flags like `#T_SEC` and `SEC_PLS` for timing.
+
+@outputs
+- `XVM052` - `XVM056`: Commands to open the main drain valves for the supply tanks.
+- `BR_WORK`: This program can reset the main barrel washing flag upon completion of its internal sequence.
+- Various internal memory bits (`M*`) and registers (`R*`) that are used to control the internal state of its sequences.
+
+@notes
+- This code is for a GE/Emerson RX3i PLC and is written in Structured Text (ST).
+- This file appears to be a collection of utility, special-purpose, and possibly legacy logic that doesn't fit neatly into the main process files.
+- Several sections of the code are disabled with `#ALW_OFF`, indicating they are not currently in use.
+*)
+VAR_GLOBAL
+	#ALW_OFF AT %S00008 : BOOL; (* Always OFF *)
+	#ALW_ON AT %S00007 : BOOL; (* Always ON *)
+	AI0017 AT %AI0017 : INT; (* T17 CIP A *)
+	AI0018 AT %AI0018 : INT; (* *)
+	AI0019 AT %AI0019 : INT; (* *)
+	AIT1010 AT %AI0010 : INT; (* CIP "A" CONDUCTIVITY *)
+	AIT1011 AT %AI0011 : INT; (* CIP "B" CONDUCTIVITY *)
+	AIT1012 AT %AI0012 : INT; (* CIP "C" CONDUCTIVITY *)
+	AUX1 AT %R00102 : ARRAY[0..4] OF WORD; (* Temp register 1 *)
+	AUX2 AT %R00103 : REAL; (* Temp register 2 *)
+	BR_END AT %M00188 : BOOL; (* Barrel end CIP *)
+	BR_WORK AT %M00184 : BOOL; (* Barrel CIP in process *)
+	BRL_ALR AT %M00176 : BOOL; (* Barrel in alarm state. *)
+	FQCCQTY AT %R09015 : INT; (* FQC C quantity (+genius send) *)
+	I00096 AT %I00096 : BOOL; (* *)
+	I00097 AT %I00097 : BOOL; (* *)
+	I00098 AT %I00098 : BOOL; (* *)
+	I00099 AT %I00099 : BOOL; (* *)
+	I00100 AT %I00100 : BOOL; (* *)
+	I00101 AT %I00101 : BOOL; (* *)
+	I00102 AT %I00102 : BOOL; (* *)
+	I00103 AT %I00103 : BOOL; (* *)
+	I00104 AT %I00104 : BOOL; (* *)
+	I00105 AT %I00105 : BOOL; (* *)
+	I00106 AT %I00106 : BOOL; (* *)
+	I00107 AT %I00107 : BOOL; (* *)
+	I00108 AT %I00108 : BOOL; (* *)
+	I00109 AT %I00109 : BOOL; (* *)
+	I00110 AT %I00110 : BOOL; (* *)
+	I00111 AT %I00111 : BOOL; (* *)
+	I00112 AT %I00112 : BOOL; (* *)
+	I00116 AT %I00116 : BOOL; (* *)
+	LSH3068 AT %I00068 : BOOL; (* SODA TANK 2 HIGH LEVEL *)
+	LSH3070 AT %I00070 : BOOL; (* FRESH WATER TANK HIGH LEVEL *)
+	LSH3074 AT %I00074 : BOOL; (* WATER RECOVERY TANK HIGH LEVEL *)
+	LSH3076 AT %I00076 : BOOL; (* ASID TANK HIGH LEVEL *)
+	LSH3079 AT %I00079 : BOOL; (* SODA TANK 1 HIGH LEVEL *)
+	LSL3067 AT %I00067 : BOOL; (* SODA TANK 1 LOW LEVEL *)
+	LSL3071 AT %I00071 : BOOL; (* FRESH WATER TANK LOW LEVEL *)
+	LSL3075 AT %I00075 : BOOL; (* WATER RECOVERY TANK LOW LEVEL *)
+	LSL3078 AT %I00078 : BOOL; (* ASID TANK LOW LEVEL *)
+	LSL3081 AT %I00081 : BOOL; (* SODA TANK 2 LOW LEVEL *)
+	M00082 AT %M00082 : BOOL; (* XV4082 CIPB *)
+	M00083 AT %M00083 : BOOL; (* XV4083 CIP C *)
+	M00285 AT %M00285 : BOOL; (* *)
+	M00286 AT %M00286 : BOOL; (* *)
+	M00287 AT %M00287 : BOOL; (* *)
+	M00288 AT %M00288 : BOOL; (* *)
+	M00289 AT %M00289 : BOOL; (* *)
+	M00290 AT %M00290 : BOOL; (* *)
+	M00291 AT %M00291 : BOOL; (* *)
+	M00292 AT %M00292 : BOOL; (* *)
+	M00293 AT %M00293 : BOOL; (* *)
+	M00294 AT %M00294 : BOOL; (* *)
+	M00295 AT %M00295 : BOOL; (* *)
+	M00296 AT %M00296 : BOOL; (* *)
+	M00297 AT %M00297 : BOOL; (* *)
+	M00298 AT %M00298 : BOOL; (* *)
+	M00299 AT %M00299 : BOOL; (* *)
+	M00300 AT %M00300 : BOOL; (* *)
+	M00301 AT %M00301 : BOOL; (* *)
+	M00302 AT %M00302 : BOOL; (* *)
+	M00303 AT %M00303 : BOOL; (* *)
+	M00307 AT %M00307 : BOOL; (* *)
+	M02050 AT %M02050 : BOOL; (* CIP Soda Tank2 Canceled *)
+	P3083 AT %I00083 : BOOL; (* SIPS "C" PUMP "RUN" *)
+	P3088 AT %I00088 : BOOL; (* SODA TANK 1, 2 HITING CIRCULATI *)
+	Q00081 AT %Q00081 : BOOL; (* XV4081 *)
+	Q00082 AT %Q00082 : BOOL; (* *)
+	Q00083 AT %Q00083 : BOOL; (* *)
+	R00606 AT %R00606 : INT; (* *)
+	R00607 AT %R00607 : INT; (* *)
+	R00608 AT %R00608 : INT; (* *)
+	R00609 AT %R00609 : INT; (* *)
+	R09009 AT %R09009 : INT; (* *)
+	R09010 AT %R09010 : INT; (* *)
+	R09011 AT %R09011 : INT; (* *)
+	R09059 AT %R09059 : INT; (* *)
+	R09063 AT %R09063 : INT; (* *)
+	SEC_PLS AT %G00001 : BOOL; (* *)
+	STOPALL AT %M00104 : BOOL; (* Stop all processes *)
+	T17_CIP_A AT %R09000 : INT; (* AI 12 regs to MMI (genius send) *)
+	WORKALL AT %M00106 : BOOL; (* CIP in operating state. *)
+	XV4052 AT %Q00052 : BOOL; (* FROM FRESH WATER TANK TO WASTE *)
+	XV4053 AT %Q00053 : BOOL; (* FROM WATER RECOVERY TANK TO WAS *)
+	XV4054 AT %Q00054 : BOOL; (* FROM ASID TANK TO WASTE *)
+	XV4055 AT %Q00055 : BOOL; (* FROM SODA TANK 1 TO WASTE *)
+	XV4056 AT %Q00056 : BOOL; (* FROM SODA TANK 2 TO WASTE *)
+	XV4081 AT %M00081 : BOOL; (* XV4081 CIPA *)
+	XVM052 AT %M00052 : BOOL; (* FROM FRESH WATER TANK TO WASTE *)
+	XVM053 AT %M00053 : BOOL; (* FROM WATER RECOVERY TANK TO WAS *)
+	XVM054 AT %M00054 : BOOL; (* FROM ASID TANK TO WASTE *)
+	XVM055 AT %M00055 : BOOL; (* FROM SODA TANK 1 TO WASTE *)
+	XVM056 AT %M00056 : BOOL; (* FROM SODA TANK 2 TO WASTE *)
+END_VAR
+VAR
+	R_TRIG_M00303 : R_TRIG;
+	R_TRIG_WORKALL : R_TRIG;
+	temp_bool_rung_1 : BOOL;
+	temp_bool_rung_2 : BOOL;
+	temp_bool_rung_3 : BOOL;
+	temp_bool_rung_4 : BOOL;
+	temp_bool_rung_52 : BOOL;
+	temp_bool_rung_54 : BOOL;
+	temp_bool_rung_56 : BOOL;
+	temp_bool_rung_58 : BOOL;
+	temp_bool_rung_60 : BOOL;
+	temp_bool_rung_64 : BOOL;
+	temp_bool_rung_5_eq : BOOL;
+END_VAR
+
+
+
+(* Rung 1 *)
+temp_bool_rung_1 := #ALW_ON
+    AND I00096
+    AND I00097
+    AND I00098
+    AND I00099
+    AND I00100
+    AND I00101
+    AND I00102
+    AND I00103;
+
+(* Rung 2 *)
+temp_bool_rung_2 := temp_bool_rung_1
+    AND I00104
+    AND I00105
+    AND I00106
+    AND I00107
+    AND I00108
+    AND I00109
+    AND I00110
+    AND I00111;
+
+(* Rung 3 *)
+temp_bool_rung_3 := temp_bool_rung_2
+    AND I00112
+    AND P3083
+    AND P3088
+    AND LSL3067
+    AND I00116
+    AND Q00081
+    AND Q00082
+    AND Q00083;
+
+(* Rung 4 *)
+(* The final result of the logic chain is stored in temp_bool_rung_4 but does not drive a direct output coil. *)
+temp_bool_rung_4 := temp_bool_rung_3
+    AND XV4081
+    AND M00082
+    AND M00083
+    AND BR_WORK
+    AND BR_END
+    AND BRL_ALR;
+
+(* Rung 5 *)
+(* CIP "A" CONDUCTIVITY *)
+IF #ALW_OFF THEN
+	R09009 := AIT1010 / 320;
+	temp_bool_rung_5_eq := (R00606 = 1);
+END_IF;
+
+(* Rung 6 *)
+(* CIP "B" CONDUCTIVITY *)
+IF #ALW_OFF THEN
+	R09010 := AIT1011 / 1;
+END_IF;
+
+(* Rung 7 *)
+(* CIP "C" CONDUCTIVITY *)
+IF #ALW_OFF THEN
+	R09011 := AIT1012 / 1;
+END_IF;
+
+(* Rung 8 *)
+(* AI0017 T17 CIP A *)
+
+(* Rung 9 *)
+(* Temp register 1 *)
+(*
+Block Instruction Analysis: MOVE_INT
+This instruction moves an integer value from a source to a destination.
+- Source: AI0017 (Address: %AI0017)
+- Destination: AUX1[0] (Address: %R00102)
+- Length: 1 WORD
+*)
+AUX1[0] := INT_TO_WORD(AI0017);
+AUX2 := INT_TO_REAL(WORD_TO_INT(AUX1[0]));
+
+(* Rung 10 *)
+(* Temp register 2 *)
+AUX2 := AUX2 * 150.0;
+AUX2 := AUX2 / 3200.0;
+
+(* Rung 11 *)
+(* AI 12 regs to MMI (genius send) *)
+T17_CIP_A := TRUNC(AUX2);
+
+(* Rung 12 *)
+(* AI0018 Spare *)
+
+(* Rung 13 *)
+(* Temp register 2 *)
+AUX2 := INT_TO_REAL(AI0018);
+
+(* Rung 14 *)
+(* Temp register 2 *)
+AUX2 := AUX2 * 150.0;
+AUX2 := AUX2 / 3200.0;
+
+(* Rung 15 *)
+(* R09059 *)
+R09059 := TRUNC(AUX2);
+
+(* Rung 16 *)
+(* AI0019 Spare *)
+
+(* Rung 17 *)
+(* Temp register 2 *)
+AUX2 := INT_TO_REAL(AI0019);
+
+(* Rung 18 *)
+(* Temp register 2 *)
+AUX2 := AUX2 * 150.0;
+AUX2 := AUX2 / 3200.0;
+
+(* Rung 19 *)
+(* R09063 *)
+R09063 := TRUNC(AUX2);
+
+(* Rung 20 *)
+
+(* Rung 21 *)
+(* M00285 *)
+M00285 := NOT (
+    (I00106 AND NOT I00107 AND NOT I00108 AND NOT I00109 AND NOT I00110 AND NOT I00111)
+    OR
+    (NOT I00106 AND I00107 AND NOT I00108 AND NOT I00109 AND NOT I00110 AND NOT I00111)
+    OR
+    (NOT I00106 AND NOT I00107 AND I00108 AND NOT I00109 AND NOT I00110 AND NOT I00111)
+    OR
+    (NOT I00106 AND NOT I00107 AND NOT I00108 AND I00109 AND NOT I00110 AND NOT I00111)
+    OR
+    (NOT I00106 AND NOT I00107 AND NOT I00108 AND NOT I00109 AND I00110 AND NOT I00111)
+    OR
+    (NOT I00106 AND NOT I00107 AND NOT I00108 AND NOT I00109 AND NOT I00110 AND I00111)
+);
+
+
+(* Rung 22 *)
+(* M00286 *)
+M00286 := (#ALW_ON AND NOT M00285) AND (I00106 OR I00107 OR I00108 OR I00109 OR I00110 OR I00111);
+
+(* Rung 23 *)
+(* M00287 *)
+M00287 := M00286 AND I00106;
+
+(* Rung 24 *)
+(* M00288 *)
+M00288 := M00286 AND I00107;
+
+(* Rung 25 *)
+(* M00289 *)
+M00289 := M00286 AND I00108;
+
+(* Rung 26 *)
+(* M00290 *)
+M00290 := M00286 AND I00109;
+
+(* Rung 27 *)
+(* M00291 *)
+M00291 := M00286 AND I00110;
+
+(* Rung 28 *)
+(* M00292 *)
+M00292 := M00286 AND I00111;
+
+(* Rung 29 *)
+(* M00299 *)
+M00299 := (#ALW_ON AND BR_WORK) AND (M00288 OR M00289 OR M00290 OR M00291 OR M00292);
+
+(* Rung 30 *)
+(* M00293 *)
+IF (BR_WORK AND M00288 And NOT LSH3079 And NOT LSL3067) AND ((NOT LSH3068 AND NOT LSL3081) OR (NOT M02050))  THEN
+	M00293 := TRUE;
+END_IF;
+
+(* Rung 31 *)
+(* M00294 *)
+IF BR_WORK AND M00288 AND NOT LSH3079 AND NOT LSL3067 And (NOT LSH3068 AND NOT LSL3081 OR NOT M02050) THEN
+    M00293 := TRUE;
+END_IF;
+
+(* Rung 32 *)
+(* M00295 *)
+IF BR_WORK AND M00290 AND NOT LSH3070 AND NOT LSL3071 THEN
+	M00295 := TRUE;
+END_IF;
+
+(* Rung 33 *)
+(* M00296 *)
+IF BR_WORK AND M00291 AND NOT LSH3074 AND NOT LSL3075 THEN
+	M00296 := TRUE;
+END_IF;
+
+(* Rung 34 *)
+(* M00297 *)
+IF BR_WORK AND M00292 AND NOT LSH3076 AND NOT LSL3078 THEN
+	M00297 := TRUE;
+END_IF;
+
+(* Rung 35 *)
+(* M00293 *)
+IF #ALW_ON AND M00303 AND NOT M00287 THEN
+	M00293 := FALSE;
+	M00294 := FALSE;
+	M00295 := FALSE;
+	M00296 := FALSE;
+	M00297 := FALSE;
+END_IF;
+
+(* Rung 36 *)
+(* M00302 *)
+IF BR_WORK And SEC_PLS (M00293 OR M00294 OR M00295 OR M00296 OR M00297) Then
+	M00302:= True;
+	R00606:= R00606 + 1;
+	FQCCQTY:= FQCCQTY +1;
+End If;
+
+
+(* Rung 37 *)
+(* M00307 *)
+M00307 := (M00293 AND NOT LSL3081 AND M02050)
+	OR (M00294 AND NOT LSL3067)
+	OR (M00295 AND NOT LSL3071)
+	OR (M00296 AND NOT LSL3075)
+	OR (M00297 AND NOT LSL3078);
+
+(* Rung 38 *)
+(* R00608 *)
+(*
+Block Instruction Analysis: MOVE_INT
+This instruction moves an integer value from a source to a destination.
+- Source: 120 (Constant)
+- Destination: R00608 (Address: %R00608)
+- Length: 1 WORD
+*)
+(*
+Block Instruction Analysis: MOVE_INT
+This instruction moves an integer value from a source to a destination.
+- Source: 240 (Constant)
+- Destination: R00609 (Address: %R00609)
+- Length: 1 WORD
+*)
+IF (NOT M00295 AND #ALW_ON) AND (R00606 < 120) THEN
+	R00608 := 120;
+	R00609 := 240;
+END_IF;
+
+(* Rung 39 *)
+(* FQC C quantity (+genius send) *)
+IF #ALW_ON AND (M00293 OR M00294 OR M00295 OR M00296) AND (R00606 = 119) THEN
+	R00606 := 300;
+END_IF;
+
+(* NOTE: The following Structured Text code was generated from Ladder Logic.
+    Helper variables are used to accurately represent certain ladder instructions.
+    Please ensure the following helper variables are declared in your project, for example in a VAR block:
+
+    VAR
+        Rung43_EdgeDetector : BOOL;
+        Rung48_EdgeDetector : BOOL;
+        Rung51_Result : BOOL;
+        Rung53_Result : BOOL;
+        Rung55_Result : BOOL;
+        Rung57_Result : BOOL;
+        Rung59_Result : BOOL;
+    END_VAR
+*)
+
+(* Rung 40 *)
+(*
+    Block Instruction Analysis: MOVE_INT
+    - Source: Constant value 721
+    - Destination: R00606 AT %R00606
+*)
+IF M00295 AND (R00606 = 600) THEN
+    R00606 := 721;
+END_IF;
+
+(* Rung 41 *)
+(*
+    Block Instruction Analysis: MOVE_INT
+    - Source: Constant value 601
+    - Destination: R00606 AT %R00606
+*)
+IF M00297 AND (R00606 = 300) THEN
+    R00606 := 601;
+END_IF;
+
+(* Rung 42 *)
+(*
+    Block Instruction Analysis: MOVE_INT (x2)
+    - Instruction 1:
+        - Source: Constant value 601
+        - Destination: R00608 AT %R00608
+    - Instruction 2:
+        - Source: Constant value 720
+        - Destination: R00609 AT %R00609
+*)
+IF (NOT M00295) AND #ALW_ON AND (R00606 > 600) THEN
+    R00608 := 601;
+    R00609 := 720;
+END_IF;
+
+(* Rung 43 *)
+IF (M00302 AND M00307 AND (R00606 >= 780)) AND NOT Rung43_EdgeDetector THEN
+    M00303 := TRUE;
+ELSE
+    M00303 := FALSE;
+END_IF;
+Rung43_EdgeDetector := M00302 AND M00307 AND (R00606 >= 780);
+
+(* Rung 44: Barrel CIP in process *)
+(*
+    Block Instruction Analysis: MOVE_INT
+    - Source: Constant value 0
+    - Destination: R00606 AT %R00606
+*)
+IF M00303 THEN
+    R00606 := 0;
+    M00302 := FALSE;
+    BR_WORK := FALSE;
+END_IF;
+
+(* Rung 45 *)
+M00300 := #ALW_ON AND M00302 AND (R00606 >= R00608 AND R00606 <= R00609);
+
+(* Rung 46 *)
+M00301 := (NOT M00297) AND M00302 AND (R00606 >= 300 AND R00606 <= 600);
+
+(* Rung 47: COMMENT0 *)
+
+(* Rung 48: CIP in operating state. *)
+IF (#ALW_ON AND NOT STOPALL) AND NOT Rung48_EdgeDetector THEN
+    WORKALL := TRUE;
+ELSE
+    WORKALL := FALSE;
+END_IF;
+Rung48_EdgeDetector := #ALW_ON AND NOT STOPALL;
+
+(* Rung 49 *)
+IF WORKALL THEN
+    M00298 := TRUE;
+END_IF;
+
+(* Rung 50 *)
+IF M00298 AND SEC_PLS THEN
+    R00607 := R00607 + 1;
+END_IF;
+
+(* Rung 51 *)
+Rung51_Result := M00298 AND (R00607 <= 10);
+
+(* Rung 52: FROM ASID TANK TO WASTE *)
+XVM054 := Rung51_Result OR (#ALW_ON AND BR_WORK AND M00292);
+
+(* Rung 53 *)
+Rung53_Result := M00298 AND (R00607 >= 11 AND R00607 <= 20);
+
+(* Rung 54: FROM WATER RECOVERY TANK TO WAS *)
+XVM053 := Rung53_Result OR (#ALW_ON AND BR_WORK AND M00291);
+
+(* Rung 55 *)
+Rung55_Result := M00298 AND (R00607 >= 21 AND R00607 <= 30);
+
+(* Rung 56: FROM FRESH WATER TANK TO WASTE *)
+XVM052 := Rung55_Result OR (#ALW_ON AND BR_WORK AND M00290);
+
+(* Rung 57 *)
+Rung57_Result := M00298 AND (R00607 >= 31 AND R00607 <= 40);
+
+(* Rung 58: FROM SODA TANK 1 TO WASTE *)
+XVM055 := (Rung57_Result AND (NOT M00301)) OR (#ALW_ON AND BR_WORK AND (M00289 OR M00288));
+
+(* Rung 59 *)
+Rung59_Result := M00298 AND (R00607 >= 41 AND R00607 <= 50);
+
+(* Rung 60: FROM SODA TANK 2 TO WASTE *)
+XVM056 := (Rung59_Result AND (NOT M00301) AND M02050) OR (#ALW_ON AND BR_WORK AND (M00288 OR M00289));
+
+(* Rung 61 *)
+IF M00298 AND (R00607 >= 51) THEN
+    M00298 := FALSE;
+END_IF;
+
+(* Rung 62 *)
+(*
+    Block Instruction Analysis: MOVE_INT
+    - Source: Constant value 0
+    - Destination: R00607 AT %R00607
+*)
+IF NOT M00298 THEN
+    R00607 := 0;
+END_IF;
+
+(* Rung 63 *)
+    VAR
+        Rung63_Result : BOOL;
+    END_VAR
+(*
+    FOR DEBUGGING: A helper variable (e.g., Rung63_Result of type BOOL) would be required.
+    This rung has no logical effect as this result is not used elsewhere.*)
+
+    Rung63_Result := XV4052 AND XV4053 AND XV4054 AND XV4055 AND XV4056;

@@ -1,0 +1,121 @@
+(*!
+@purpose
+This program (`FQC.txt`) is a centralized flow pulse counter and volume totalizer for multiple process lines (CIP A, B, C) as well as the main plant water supply. It reads the physical pulse signals from several flow meters and converts them into accumulated volume counts and one-shot event flags.
+
+Its primary responsibilities are:
+1.  **Pulse Counting and Totalizing:** For each of the four monitored flow meters (Lines A, B, C, and Water), it detects the rising edge of the physical pulse input. Upon detection, it increments the corresponding total volume register (e.g., `FQCCQTY`, `FQCBQTY`) by a fixed amount (10 units, likely liters).
+2.  **One-Shot Pulse Generation:** For each detected flow meter pulse, it generates a corresponding single-scan boolean flag (`FQCAPLS`, `FQCBPLS`, etc.). These flags are used by other programs that need to trigger logic on the pulse event itself.
+3.  **Daily Water Consumption Calculation:** The program tracks the total water volume that passes through the main water meter (`FT3090`). Once every 24 hours, it calculates the total consumption for that day (`EXP_DAY`) and updates its counters.
+4.  **Simulation Mode:** It includes a `SIMFQC` flag that can be enabled to generate simulated pulses for testing the counting and totalizing logic without physical flow.
+
+@inputs
+- `FQC3093`, `FQC3094`, `FQC3095`, `FT3090`: The physical digital inputs (`%I`) from the flow meters for CIP C, A, B, and the main water line, respectively.
+- `SIM_ON`: A flag to enable the simulation mode.
+- `HR_24`: A flag that is presumably TRUE once every 24 hours, used to trigger the daily consumption calculation.
+
+@outputs
+- `FQCCQTY`, `FQCBQTY`, `FQCWQTY`: The accumulated flow volumes for the C, B, and Water lines. Note that Line A's quantity is not directly calculated in this file but its pulse is generated.
+- `FQCCPLS`, `FQCAPLS`, `FQCBPLS`, `FQCWPLS`: The one-shot boolean flags that are TRUE for a single scan when a new pulse is detected on the respective flow meter.
+- `EXP_DAY`: The calculated total water consumption for the previous 24-hour period.
+- `WTR_N`: The running total of water consumed since the last daily reset.
+
+@notes
+- This code is for a GE/Emerson RX3i PLC and is written in Structured Text (ST).
+- The use of `R_TRIG` function blocks is critical for ensuring that each physical pulse is counted exactly once.
+- The logic for CIP B is slightly different, as it increments two separate counters (`R00436` and `R00450`/`FQCBQTY`) for each pulse.
+*)
+VAR_GLOBAL
+    FQCAPLS AT %M00101 : BOOL;
+    FQCBPLS AT %M00102 : BOOL;
+    FQCBQTY AT %R09014 : INT;
+    FQCCPLS AT %M00103 : BOOL;
+    FQCCQTY AT %R09015 : INT;
+    FQCWPLS AT %M00107 : BOOL;
+    FQCWQTY AT %R09012 : INT; (* Water Meter *)
+    FQC3093 AT %I00093 : BOOL;
+    FQC3094 AT %I00094 : BOOL;
+    FQC3095 AT %I00095 : BOOL;
+    FT3090 AT %I00090 : BOOL;
+    R00436 AT %R00436 : INT;
+    R00450 AT %R00450 : INT;
+    R00604 AT %R00604 : DINT; (* Yesterday's Water Counter *)
+    SIM_ON AT %M00100 : BOOL;
+    XV4001 AT %Q00001 : BOOL;
+    XV4012 AT %Q00012 : BOOL;
+    XV4013 AT %Q00013 : BOOL;
+    XV4014 AT %Q00014 : BOOL;
+END_VAR
+
+VAR
+    END_DAY AT %M00283 : BOOL;
+    EXP_DAY AT %R00602 : DINT; (* Daily Water Consumption *)
+    HR_24 AT %M00263 : BOOL;
+    SIMFQC AT %T00001 : BOOL;
+    WTR_N AT %R00600 : DINT; (* Daily Water Counter *)
+
+    (* R_TRIG instances for edge detection *)
+    Rung2_R_TRIG : R_TRIG;
+    Rung3_R_TRIG : R_TRIG;
+    Rung4_R_TRIG : R_TRIG;
+    Rung6_R_TRIG : R_TRIG;
+    Rung9_R_TRIG : R_TRIG;
+
+    (* Helper variables *)
+    Rung6_Condition : BOOL;
+END_VAR
+
+(* Rung 1 *)
+SIMFQC := (#ALW_OFF AND SIM_ON AND NOT #T_SEC);
+
+(* Rung 2  *)
+IF FQC3093 OR SIMFQC THEN
+    FQCCQTY := FQCCQTY + 10;
+END_IF;
+Rung2_R_TRIG(CLK := (FQC3093 OR SIMFQC));
+FQCCPLS := Rung2_R_TRIG.Q;
+
+(* Rung 3 *)
+Rung3_R_TRIG(CLK := (FQC3094 OR SIMFQC));
+FQCAPLS := Rung3_R_TRIG.Q;
+
+(* Rung 4 *)
+IF FQC3095 OR #ALW_OFF THEN
+    R00436 := R00436 + 10;
+END_IF;
+Rung4_R_TRIG(CLK := (FQC3095 OR #ALW_OFF));
+FQCBPLS := Rung4_R_TRIG.Q;
+
+(* Rung 5 *)
+IF #ALW_ON AND FQCBPLS THEN
+    FQCBQTY := FQCBQTY + 10;
+    R00450 := R00450 + 10;
+END_IF;
+
+(* Rung 6  *)
+Rung6_R_TRIG(CLK := FT3090 OR (SIMFQC AND (XV4001 OR XV4014 OR XV4012 OR XV4013)));
+FQCWPLS := Rung6_R_TRIG.Q;
+
+(* Rung 7 - COMMENT0 *)
+
+(* Rung 8 *)
+IF FQCWPLS THEN
+    FQCWQTY := FQCWQTY + 10;
+	IF (FQCWQTY >= 3000) THEN
+		FQCWQTY := 0;
+	End_IF;
+END_IF;
+
+(* Rung 9 *)
+Rung9_R_TRIG(CLK := #ALW_ON AND NOT HR_24);
+END_DAY := Rung9_R_TRIG.Q;
+
+(* Rung 10 *)
+IF FQCWPLS AND #ALW_ON THEN
+	WTR_N := WTR_N + 10;
+END_IF;
+
+(* Rung 11 *)
+IF END_DAY AND #ALW_ON THEN
+    EXP_DAY := WTR_N - R00604;
+	R00604 := EXP_DAY + R00604;
+END_IF;

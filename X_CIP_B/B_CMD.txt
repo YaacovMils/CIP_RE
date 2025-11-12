@@ -1,0 +1,193 @@
+(*!
+@purpose
+This program (`B_CMD.txt`) functions as the central command decoder for the Cleaning-In-Place (CIP) sequence for Line B. It is structurally and functionally a direct parallel to `A_CMD.txt`. It receives a single integer command from an HMI or master sequencer and translates it into individual boolean flags to control the stages of the cleaning process for Line B.
+
+Its primary responsibilities are:
+1.  **Command Interpretation:** It decodes the `CIPBCMD` integer to determine which action to take (e.g., start stage 1, start stage 2 with soda, start stage 2 with acid, end the sequence).
+2.  **Reactor Number Extraction:** It parses the `CIPBCMD` variable, using bitwise operations to separate the low-byte command from the high-byte reactor number.
+3.  **State Control:** It sets and resets the state flags (`B1_STRT`, `B2_STRT`, `B3_STRT`) based on the received command, ensuring that stages are initiated correctly and that only one stage is active at a time.
+4.  **Stop and End Logic:** It consolidates multiple system-level stop conditions (global stop, alarms, HMI stop) into a single `B_STOP` flag for the Line B logic.
+
+@inputs
+- `CIPBCMD` (%R00587): A composite integer command where the lower 8 bits represent the command code (1-7) and the upper 8 bits represent the target reactor number.
+- `STOPALL` (%M00104): A global command to stop all CIP processes.
+- `B_ALARM` (%M00171): A flag indicating an active alarm condition for Line B.
+- `BMMISTP` (%M00153): A stop command initiated from the HMI/MMI for Line B.
+- `ENDALL` (%M00105): A global command to end all CIP processes.
+- `M00206`, `M00207`: Interlock conditions, possibly related to chemical availability or path readiness.
+
+@outputs
+- `B_REAC_num_` (%R00131): The extracted reactor number for the current CIP B sequence.
+- `B1_STRT` (%M00146): A flag to start Stage 1 (pre-rinse).
+- `B2_STRT` (%M00147): A flag to start Stage 2 (chemical wash).
+- `B3_STRT` (%M00148): A flag to start Stage 3 (final rinse).
+- `B2USE_S` (%M00150): A boolean flag to select the chemical for Stage 2 (TRUE for soda, FALSE for acid).
+- `B_STOP` (%M00144): A consolidated flag indicating that the Line B sequence should be stopped.
+- `B_END` (%M00145): A flag indicating the successful completion or forced end of the Line B sequence.
+- `FQCBQTY` (%R09014): Resets the totalized flow counter to zero at the beginning of a new stage.
+
+@notes
+- This code is for a GE/Emerson RX3i PLC and is written in Structured Text (ST).
+- The near-identical nature of this program to `A_CMD.txt` strongly suggests a templated or copied design pattern was used for creating logic for the different CIP lines.
+- This program is the primary interface between high-level commands and the detailed execution logic found in `B_CIP_ST.txt`.
+*)
+VAR_GLOBAL
+	(* Always OFF *)
+	#ALW_OFF AT %S00008 : BOOL;
+	(* Always ON *)
+	#ALW_ON AT %S00007 : BOOL;
+	(* CIP B stage 1 started *)
+	B1_STRT AT %M00146 : BOOL;
+	(* CIP B stage 1 use recov. water *)
+	B1USE_R AT %M00151 : BOOL;
+	(* CIP B stage 2 started *)
+	B2_STRT AT %M00147 : BOOL;
+	(* CIP B stage 2 use soda *)
+	B2USE_S AT %M00150 : BOOL;
+	(* CIP B Stage 3 started *)
+	B3_STRT AT %M00148 : BOOL;
+	(* CIP B in alarm state. *)
+	B_ALARM AT %M00171 : BOOL;
+	(* CIP B ended *)
+	B_END AT %M00145 : BOOL;
+	(* Current Reactor number for CIP B *)
+	B_REAC_num_ AT %R00131 : INT;
+	(* CIP B stopped *)
+	B_STOP AT %M00144 : BOOL;
+	(* CIP B stopped from MMI *)
+	BMMISTP AT %M00153 : BOOL;
+	(* CIP B command (0,1,2,3,4,5,6) *)
+	CIPBCMD AT %R00587 : INT;
+	(* End all processes *)
+	ENDALL AT %M00105 : BOOL;
+	(* FQC B quantity (+genuis send) *)
+	FQCBQTY AT %R09014 : INT;
+	(* HMI CMD EQ 555 *)
+	M00206 AT %M00206 : BOOL;
+	(* HMI CMD EQ 777 *)
+	M00207 AT %M00207 : BOOL;
+	M00299 AT %M00299 : BOOL;
+	R00436 AT %R00436 : INT;
+	R00450 AT %R00450 : INT;
+	R09061 AT %R09061 : INT;
+	(* Stop all processes *)
+	STOPALL AT %M00104 : BOOL;
+END_VAR
+
+(* Rung 1: COMMENT0 *)
+
+(* Rung 2: Current Reactor number for CIP B *)
+(* This logic checks if the command word contains extended information.
+ If the value is greater than 255, it assumes the high byte is the
+ reactor number and the low byte is the actual command. *)
+IF CIPBCMD > 255 THEN
+	B_REAC_num_ := CIPBCMD AND 65280;
+	CIPBCMD := CIPBCMD AND 255;
+END_IF;
+
+
+(* Rung 3: COMMENT1 *)
+
+(* Rung 4: Command start stage 1 *)
+CMD_S1 := (CIPBCMD = 1);
+
+(* Rung 5: Command Start stage 2 with SODA *)
+CMD_S2S := #ALW_ON AND M00207 AND (CIPBCMD = 2);
+
+(* Rung 6: Command Start stage 2 with acid *)
+CMD_S2A := #ALW_ON AND M00206 AND (CIPBCMD = 3);
+
+(* Rung 7: Command Start stage 3 *)
+CMD_S3 := (CIPBCMD = 4);
+
+(* Rung 8: Command End CIP B and/or stage 3 *)
+CMD_END := (CIPBCMD = 7);
+
+(* Rung 9: CIP B stage 1 started *)
+IF (CIPBCMD <> 1) THEN
+	B1_STRT := FALSE;
+END_IF;
+
+(* Rung 10: CIP B stage 2 started *)
+IF (CIPBCMD <> 2) THEN
+	B2_STRT := FALSE;
+END_IF;
+
+(* Rung 11: CIP B Stage 3 started *)
+IF (CIPBCMD <> 4) THEN
+	B3_STRT := FALSE;
+END_IF;
+
+(* Rung 12: water return for waldner *)
+RET_WAT := #ALW_ON AND #ALW_ON AND (NOT #ALW_OFF) AND (WAT_RET <> 0);
+
+(* Rung 13: COMMENT2 *)
+
+(* Rung 14: CIP B ended *)
+IF ((CMD_S3
+	 OR CMD_S2S
+	 OR CMD_S2A
+	 OR CMD_S1)
+	 AND (NOT B3_STRT) AND (NOT B2_STRT) AND (NOT B1_STRT) AND (NOT B_STOP))
+	 THEN
+	FQCBQTY := 0;
+	B_END := FALSE;
+END_IF;
+
+(* Rung 15: FQC B quantity (+genuis send) *)
+IF #ALW_ON AND (NOT #ALW_OFF) THEN
+    FQCBQTY := R00450;
+END_IF;
+
+
+(* Rung 16: R00450 *)
+IF #ALW_ON AND CMD_END THEN
+	R00450 := 0;
+	R00436 := 0;
+END_IF;
+
+(* Rung 17: COMMENT3 *)
+
+(* Rung 18: CIP B stage 1 started *)
+IF (CMD_S1 AND (NOT B1_STRT) AND (NOT B2_STRT) AND (NOT B3_STRT) AND (NOT B_STOP)) THEN
+	B1_STRT := TRUE;
+	B1USE_R := FALSE;
+END_IF;
+
+(* Rung 19: COMMENT4 *)
+
+(* Rung 20: CIP B stage 2 started *)
+IF ((CMD_S2S OR CMD_S2A) AND (NOT B1_STRT) AND (NOT B2_STRT) AND (NOT B3_STRT) AND (NOT B_STOP)) THEN
+	B2_STRT := TRUE;
+END_IF;
+IF CMD_S2S THEN
+	B2USE_S := TRUE;
+ELSIF CMD_S2A THEN
+	B2USE_S := FALSE;
+END_IF;
+
+(* Rung 21: COMMENT5 *)
+
+(* Rung 22: CIP B Stage 3 started *)
+IF (CMD_S3 AND (NOT B3_STRT) AND (NOT B2_STRT) AND (NOT B1_STRT) AND (NOT B_STOP)) THEN
+	B3_STRT := TRUE;
+END_IF;
+
+(* Rung 23: COMMENT6 *)
+
+(* Rung 24 : CIP B stopped *)
+B_STOP := (BMMISTP OR STOPALL OR B_ALARM OR M00299) AND (NOT B_END);
+IF B_STOP THEN
+	R09061 := 555;
+END_IF;
+
+(* Rung 25*)
+IF #ALW_ON AND (NOT B_STOP) THEN
+    R09061 := 0;
+END_IF;	
+
+
+(* Rung 26: CIP B ended *)
+IF CMD_END OR ENDALL THEN
+	B_END := TRUE;
+END_IF;

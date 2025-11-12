@@ -1,0 +1,231 @@
+(*!
+@purpose
+This program (`C_CIP.txt`) contains the detailed, low-level process logic for executing the Cleaning-In-Place (CIP) sequence for Line C. It is the core execution engine that directly controls the pumps and valves based on the active stage and process feedback. Its structure is a direct parallel to the logic in `A_CIP.txt` and `B_CIP_ST.txt`.
+
+Its primary functions are:
+1.  **Medium Selection & Supply:** Based on the active stage (`C1_STRT`, `C2_STRT`, `C3_STRT`) and the selected chemical (`C2USE_S`), it opens the correct valves (`XVM045`, `XVM046`, `XVM051`) to supply the appropriate fluid (water, soda, or acid).
+2.  **Filling and Pumping:** It controls the main CIP C supply valve (`XVM049`) and pump (`P4M66`). It monitors the totalized flow (`FQCCQTY`) against a target volume (`R00455`) to determine when the target vessel is full (`C_FULL`).
+3.  **Conductivity Monitoring & Return Routing:** It continuously checks the return fluid conductivity (`C_C_CLC`) against setpoints (`COND_3`, `COND_45`). Based on the result, it decides whether to send the fluid back to the source tank (if conductivity is good) or to the drain (`XVM017`). It controls the various return valves (`XVM015`, `XVM016`, `XVM050`) accordingly.
+4.  **Interlock Management:** It respects interlocks such as tank levels (`LSH*`, `LSL*`) and tank busy statuses (`T*_BUSY`) to prevent overflows or conflicts.
+5.  **State Management:** It manages the internal process state flags (`C_FILLS`, `C_FULL`) and resets all its states when the `C_END` flag is received.
+
+@inputs
+- `C1_STRT` (BOOL), `C2_STRT` (BOOL), `C3_STRT` (BOOL): Boolean flags from `C_CMD.txt` that activate the corresponding stage.
+- `C2USE_S` (BOOL): A flag to select soda (TRUE) or acid (FALSE) for the Stage 2 wash.
+- `C_STOP` (BOOL), `C_END` (BOOL): Global flags to stop or terminate the Line C process.
+- `C_C_CLC` (INT): The current measured conductivity of the fluid returning from Line C.
+- `COND_3` (INT), `COND_45` (INT): Target conductivity setpoints for acid and soda.
+- `FQCCQTY` (INT): The accumulated volume from the flowmeter for the current fill process.
+- `LSH*` (BOOL), `LSL*` (BOOL): High and low-level switch statuses from various tanks, used as interlocks.
+- `T*_BUSY` (BOOL): Flags indicating if a source tank is busy with another process.
+
+@outputs
+- `C_FILLS` (BOOL), `C_FULL` (BOOL): Status flags indicating the vessel is filling or has completed filling.
+- `P4M66` (BOOL): Command to start the Line C CIP supply pump.
+- `XVM045` (BOOL), `XVM046` (BOOL), `XVM051` (BOOL): Commands to open the supply valves from the Fresh Water, Soda, and Acid tanks.
+- `XVM049` (BOOL): Command to open the main supply valve to the Line C reactors/barrels.
+- `XVM015` (BOOL), `XVM016` (BOOL), `XVM017` (BOOL), `XVM050` (BOOL): Commands to open the return path valves.
+
+@notes
+- This code is for a GE/Emerson RX3i PLC and is written in Structured Text (ST).
+- This program is the "workhorse" for Line C, handling the direct control of field devices, while `C_CMD.txt` handles the high-level sequencing commands.
+- The similarity to the A-line and B-line logic confirms the use of a standardized, templated design across the facility.
+*)
+VAR_GLOBAL
+	(* Always OFF *)
+	"#ALW_OFF" AT %S00008 : BOOL;
+	(* Always ON *)
+	"#ALW_ON" AT %S00007 : BOOL;
+	(* Temp register 1 *)
+	AUX1 AT %R00102 : ARRAY[0..4] OF WORD;
+	(* CIP C stage 1 started *)
+	C1_STRT AT %M00157 : BOOL;
+	(* CIP C stage 2 started *)
+	C2_STRT AT %M00158 : BOOL;
+	(* CIP C stage 2 use soda *)
+	C2USE_S AT %M00161 : BOOL;
+	(* CIP C Stage 3 started *)
+	C3_STRT AT %M00159 : BOOL;
+	(* Calculated CIP C conductivity *)
+	C_C_CLC AT %R00126 : INT;
+	(* CIP C ended *)
+	C_END AT %M00156 : BOOL;
+	(* CIP C fills reactor *)
+	C_FILLS AT %M00162 : BOOL;
+	(* CIP C-reactor was filled *)
+	C_FULL AT %M00160 : BOOL;
+	(* CIP C stopped *)
+	C_STOP AT %M00155 : BOOL;
+	(* CIP C command (local-no genius) *)
+	CIPCCDL AT %R00200 : INT;
+	(* Required Conduct. in ACID barrel *)
+	(* NOTE: The provided address 'R00536[54]' is not a valid physical address location. Declaring symbolically. *)
+	COND_3 : INT;
+	(* Required Conduct in Soda 1/2 brl *)
+	(* NOTE: The provided address 'R00536[56]' is not a valid physical address location. Declaring symbolically. *)
+	COND_45 : INT;
+	(* FQC C quantity (+genius send) *)
+	FQCCQTY AT %R09015 : INT;
+	(* TEMP. TANK HIGH LEVEL *)
+	LSH3072 AT %I00072 : BOOL;
+	(* WATER RECOVERY TANK HIGH LEVEL *)
+	LSH3074 AT %I00074 : BOOL;
+	(* ASID TANK HIGH LEVEL *)
+	LSH3076 AT %I00076 : BOOL;
+	(* SODA TANK 1 HIGH LEVEL *)
+	LSH3079 AT %I00079 : BOOL;
+	(* SODA TANK 1 LOW LEVEL *)
+	LSL3067 AT %I00067 : BOOL;
+	(* FRESH WATER TANK LOW LEVEL *)
+	LSL3071 AT %I00071 : BOOL;
+	(* ASID TANK LOW LEVEL *)
+	LSL3078 AT %I00078 : BOOL;
+	(* XV4083 CIP C *)
+	M00083 AT %M00083 : BOOL;
+	M00222 AT %M00222 : BOOL;
+	M00300 AT %M00300 : BOOL;
+	M00301 AT %M00301 : BOOL;
+	M00306 AT %M00306 : BOOL;
+	(* SIPS "C" PUMP TO "RUN" *)
+	P4M66 AT %M00066 : BOOL;
+	R00443 AT %R00443 : ARRAY[0..3] OF WORD;(TON)
+	R00455 AT %R00455 : INT;
+	R00610 AT %R00610 : INT;
+	R09011 AT %R09011 : INT;
+	(* Water tank busy *)
+	T1_BUSY AT %M00122 : BOOL;
+	(* Acid tank busy *)
+	T3_BUSY AT %M00124 : BOOL;
+	(* Soda1(tnk 4) active,Soda2 passiv *)
+	T4ACTIV AT %M00127 : BOOL;
+	(* CIPR "C" TO SODA TANK 1 TO "OPE *)
+	XVM015 AT %M00015 : BOOL;
+	(* CIPR "C" TO RETURN WATER TANK T *)
+	XVM016 AT %M00016 : BOOL;
+	(* CIPR "C" TO WASTE TO "OPEN" *)
+	XVM017 AT %M00017 : BOOL;
+	(* FROM FRESH TANK TO CIPS "C" TO *)
+	XVM045 AT %M00045 : BOOL;
+	(* FROM SODA TANK 1 TO CIPS "C" TO *)
+	XVM046 AT %M00046 : BOOL;
+	(* CIPC TO REACTORS ????? *)
+	XVM049 AT %M00049 : BOOL;
+	(* CIPR "C" TO ASID TANK TO "OPEN *)
+	XVM050 AT %M00050 : BOOL;
+	(* FROM ASID TANK TO SIPS "C" TO " *)
+	XVM051 AT %M00051 : BOOL;
+	(* FROM CIPS "C" TO WASTE *)
+	XVM059 AT %M00059 : BOOL;
+	_Bit AT %T00002 : BOOL; (* temporary bit *)
+END_VAR
+
+(* Rung 1 *)
+IF C2_STRT AND NOT C2USE_S AND NOT C_STOP AND NOT C_END THEN
+  AUX1[0] := COND_3 - 0;
+  ACID_OK := (C_C_CLC >= AUX1[0]);
+ELSE
+  ACID_OK := FALSE;
+END_IF;
+
+(* Rung 2 *)
+IF C2_STRT AND C2USE_S AND NOT C_STOP AND NOT C_END THEN
+  AUX1[0] := COND_45 - 0;
+  SODA_OK := (C_C_CLC >= AUX1[0]);
+ELSE
+  SODA_OK := FALSE;
+END_IF;
+
+
+(* Rung 3 *)
+WATR_OK := C3_STRT AND NOT C_STOP AND NOT C_END AND (C_C_CLC < 5);
+
+(* Rung 4 *)
+IF (C1_STRT OR SODA_OK OR ACID_OK OR WATR_OK) AND (NOT C_STOP AND NOT C_END AND NOT C_FULL) THEN
+	C_FILLS := TRUE;
+END_IF;
+
+(* Rung 5 *)
+IF #ALW_ON AND C1_STRT THEN
+	R00455 := 60;
+END_IF;
+
+(* Rung 6 *)
+IF C2_STRT THEN
+	R00455 := 300;
+END_IF;
+
+(* Rung 7 *)
+IF C3_STRT AND #ALW_ON THEN
+	R00455 := 180;
+END_IF;
+
+(* Rung 8: Can fill reactor *)
+CANFILL := ((C1_STRT AND NOT T1_BUSY)
+		  OR(C2_STRT AND (C2USE_S AND #ALW_ON AND T4ACTIV) OR (NOT C2USE_S AND NOT T3_BUSY))
+		  OR(C3_STRT AND NOT T1_BUSY)
+		  AND NOT C_STOP AND NOT C_END);
+
+(* Rung 9 *)
+_Bit:=FALSE;
+IF M00222 AND CANFILL AND C_FILLS THEN
+	FQCCQTY := FQCCQTY + 1;
+	IF (FQCCQTY >= R00455) THEN
+		C_FILLS := FALSE;
+		_Bit:=TRUE;
+	END_IF;
+END_IF;
+
+(* Rung 10 *)
+IF _Bit OR (#ALW_ON AND LSH3072) THEN
+	C_FULL := TRUE;
+END_IF;
+
+(* Rung 11: COMMENT0 *)
+
+(* Rung 12 *)
+XVM059 := #ALW_OFF AND (CIPCCDL >= 1 AND CIPCCDL <= 7);
+
+(* Rung 13 *)
+XVM045 := M00300 OR ((CANFILL AND C_FILLS) AND (C1_STRT OR C3_STRT));
+
+(* Rung 14 *)
+_Bit:= (CANFILL AND C_FILLS AND C2_STRT) OR (#ALW_ON AND M00301);
+XVM046 := _Bit AND C2USE_S AND NOT M00301 AND LSL3067;
+XVM051 := _Bit AND (NOT C2USE_S  OR M00301) AND LSL3078;
+
+(* Rung 15 *)
+XVM049 := _Bit:= ((CANFILL AND C_FILLS) AND (C1_STRT OR C2_STRT OR C3_STRT)
+				  OR (M00300 AND LSL3071)
+				  OR (M00301 AND LSL3078));
+
+(* Rung 16 *)
+R00443(IN := _Bit, PT := T#5S);
+P4M66 := R00443.Q;
+
+(* Rung 17 *)
+M00083 := (XVM046 OR XVM051) AND #ALW_ON AND (R00443[0] >= 10);
+
+(* Rung 18 *)
+M00306 := #ALW_ON AND C_FULL AND (R09011 >= R00610);
+
+(* Rung 19: CIPR "C" TO WASTE TO "OPEN" *)
+XVM017 := ((CANFILL AND NOT #ALW_OFF) OR (#ALW_ON AND C_FULL)
+			AND ((C1_STRT AND LSH3074)
+			 OR (C3_STRT AND LSH3074)
+			 OR ((C2_STRT AND ((LSH3079 AND C2USE_S)
+								OR (LSH3076 AND NOT C2USE_S)));
+
+(* Rung 20 *)
+_Bit:= C_FULL AND NOT C_STOP AND NOT C_END;
+XVM016 := _Bit AND C3_STRT AND NOT LSH3074);			
+XVM015 := _Bit AND C2_STRT AND C2USE_S AND NOT LSH3079;
+XVM050 := _Bit AND C2_STRT AND NOT C2USE_S AND NOT LSH3076;
+
+(* Rung 21: CIP C ended *)
+IF C_END THEN
+	C_FILLS := TRUE;
+	C_FULL := FALSE;
+	C1_STRT := FALSE;
+	C2_STRT := FALSE;
+	C3_STRT := FALSE;
+END_IF;

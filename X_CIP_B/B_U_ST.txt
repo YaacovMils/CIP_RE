@@ -1,0 +1,148 @@
+(*!
+@purpose
+This program (`B_U_ST.txt`) is responsible for creating a comprehensive status word for the Cleaning-In-Place (CIP) B-line process. It is a direct functional equivalent of `A_U_ST.txt`. The program aggregates numerous individual boolean status flags into a single integer variable (`B_STAT`) for efficient communication with external systems like an HMI or SCADA.
+
+The program constructs the status word by:
+1.  Assigning a base value to indicate the current active stage (1 for Stage 1, 2 for Stage 2, 3 for Stage 3).
+2.  Setting specific bits within the integer to represent various states (e.g., Stopped, Alarm, Ended, Ready).
+3.  Adding the current reactor number (`B_REAC_num_`) to the final value, embedding the target vessel information directly into the status word.
+
+@inputs
+- `B1_STRT` (BOOL), `B2_STRT` (BOOL), `B3_STRT` (BOOL): Boolean flags indicating the currently active CIP stage for Line B.
+- `B_STOP` (BOOL): Flag indicating the Line B process is stopped.
+- `B_ALARM` (BOOL): Flag indicating an alarm condition on Line B.
+- `B_END` (BOOL): Flag indicating the Line B process has completed.
+- `B_FILLS` (BOOL), `B_FULL` (BOOL): Flags related to the filling status of the reactor on Line B.
+- `B_REAC_num_` (INT): The number of the reactor currently being serviced by CIP B.
+
+@outputs
+- `B_STAT` (%R09048) (INT): The final, consolidated status integer. Its value is interpreted as follows:
+    - **Lower 4 bits (0-15):** Represent the active stage (1, 2, or 3).
+    - **Bit 5 (Value 16):** Set if `B_STOP` is TRUE.
+    - **Bit 6 (Value 32):** Set if `B_END` is TRUE.
+    - **Bit 7 (Value 64):** Set if the system is idle/ready.
+    - **Bit 8 (Value 128):** Set if `B_ALARM` is TRUE.
+    - **Higher bits:** The reactor number is added to this base value.
+
+@notes
+- This code is for a GE/Emerson RX3i PLC and is written in Structured Text (ST).
+- The near-identical structure of this file compared to `A_U_ST.txt` confirms a templated or copy-paste approach was used for developing logic for the different CIP lines.
+- This program provides an efficient, single-register summary of the entire state of the CIP B line, which is ideal for SCADA/HMI communication.
+*)
+VAR_GLOBAL
+	AUX1 AT %R00102 : ARRAY [0..4] OF WORD; (* Temp register 1 *)
+	B1_STRT AT %M00146 : BOOL; (* CIP B stage 1 started *)
+	B2_STRT AT %M00147 : BOOL; (* CIP B stage 2 started *)
+	B3_STRT AT %M00148 : BOOL; (* CIP B Stage 3 started *)
+	B_ALARM AT %M00171 : BOOL; (* CIP B in alarm state. *)
+	B_END AT %M00145 : BOOL; (* CIP B ended *)
+	B_FILLS AT %M00149 : BOOL; (* CIP B fills the ractor *)
+	B_FULL AT %M00152 : BOOL; (* CIP B filled a reactor *)
+	B_REAC_num_ AT %R00131 : INT; (* Current Reactor number for CIP B *)
+	B_STAT AT %R09048 : INT; (* CIP B Status *)
+	B_STOP AT %M00144 : BOOL; (* CIP B stopped *)
+END_VAR
+
+(* Rung 1 - Temp register 1 *)
+(*
+* Block Instruction Analysis: AND_WORD
+* This instruction performs a bitwise AND operation. It will AND the value
+* of B_STAT with the constant 15 (binary 0000_0000_0000_1111) and store the
+* result in AUX1[0]. This effectively isolates the lower 4 bits of B_STAT.
+*)
+AUX1[0] := B_STAT AND 15;
+
+(* Rung 2 - Temp register 1 *)
+(*
+* Block Instruction Analysis: MOVE_INT
+* Source: Constant value '1'.
+* Destination: Variable 'AUX1[0]' at memory address %R00102.
+*)
+IF B1_STRT THEN
+	AUX1[0] := 1;
+END_IF;
+
+(* Rung 3 - Temp register 1 *)
+(*
+* Block Instruction Analysis: MOVE_INT
+* Source: Constant value '2'.
+* Destination: Variable 'AUX1[0]' at memory address %R00102.
+*)
+IF B2_STRT THEN
+	AUX1[0] := 2;
+END_IF;
+
+(* Rung 4 - Temp register 1 *)
+(*
+* Block Instruction Analysis: MOVE_INT
+* Source: Constant value '3'.
+* Destination: Variable 'AUX1[0]' at memory address %R00102.
+*)
+IF B3_STRT THEN
+	AUX1[0] := 3;
+END_IF;
+
+(* Rung 5 - Temp register 1 *)
+(*
+* Block Instruction Analysis: BIT_SET_WORD
+* This instruction sets a specific bit within the target WORD variable to 1.
+* Target Variable: AUX1[0]
+* Bit to Set: 5 (This corresponds to a value of 2^(5-1) = 16).
+* The ST equivalent uses a bitwise OR operation.
+*)
+IF B_STOP THEN
+	AUX1[0] := AUX1[0] OR 16;
+END_IF;
+
+(* Rung 6 - Temp register 1 *)
+(*
+* Block Instruction Analysis: BIT_SET_WORD
+* This instruction sets a specific bit within the target WORD variable to 1.
+* Target Variable: AUX1[0]
+* Bit to Set: 8 (This corresponds to a value of 2^(8-1) = 128).
+* The ST equivalent uses a bitwise OR operation.
+*)
+IF B_ALARM THEN
+	AUX1[0] := AUX1[0] OR 128;
+END_IF;
+
+(* Rung 7 - Temp register 1 *)
+(*
+* Block Instruction Analysis: BIT_SET_WORD
+* This instruction sets a specific bit within the target WORD variable to 1.
+* Target Variable: AUX1[0]
+* Bit to Set: 6 (This corresponds to a value of 2^(6-1) = 32).
+* The ST equivalent uses a bitwise OR operation.
+*)
+IF B_END THEN
+	AUX1[0] := AUX1[0] OR 32;
+END_IF;
+
+(* Rung 8 - Temp register 1 *)
+(*
+* Block Instruction Analysis: BIT_SET_WORD
+* This instruction sets a specific bit within the target WORD variable to 1.
+* Target Variable: AUX1[0]
+* Bit to Set: 7 (This corresponds to a value of 2^(7-1) = 64).
+* The ST equivalent uses a bitwise OR operation.
+*)
+IF NOT B_FILLS AND NOT B_FULL AND NOT B1_STRT AND NOT B_END THEN
+	AUX1[0] := AUX1[0] OR 64;
+END_IF;
+
+(* Rung 9 - CIP B Status *)
+(*
+* Block Instruction Analysis: MOVE_INT
+* Source: Variable 'AUX1[0]' at memory address %R00102.
+* Destination: Variable 'B_STAT' at memory address %R09048.
+*)
+B_STAT := AUX1[0];
+(*
+* Block Instruction Analysis: ADD_INT
+* This instruction adds the values of two variables and stores the result
+* in a destination variable.
+* Input 1: B_STAT
+* Input 2: B_REAC_num_
+* Output: B_STAT (The result overwrites the first input).
+*)
+B_STAT := B_STAT + B_REAC_num_;

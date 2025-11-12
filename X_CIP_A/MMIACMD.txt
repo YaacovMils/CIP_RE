@@ -1,0 +1,58 @@
+(*
+* @purpose: Handles specific HMI commands related to the "A" CIP unit.
+*           This program is responsible for interpreting commands from the MMI to stop the "A"
+*           unit's automatic sequence and to reset associated alarms.
+* @platform: GE/Emerson RX3i PLC
+* @language: Structured Text (ST)
+*
+* @inputs:
+*   R00536[62] (INT) (aliased as MMICMD): The command code received from the HMI.
+*     - Command `26`: Stop Auto Mode.
+*     - Commands `28`, `29`: Reset Alarms.
+*
+* @outputs:
+*   A_ALARM (%M00170) (BOOL): Resets the general alarm for the "A" unit.
+*   T1_ALRM (%M00173) (BOOL): Resets the alarm for Tank 1.
+*   T1_STP (%M00180) (BOOL): Resets the stop flag for Tank 1.
+*   AMMISTP (%M00138) (BOOL): Sets a flag to stop the "A" unit's automatic sequence.
+*
+* @notes: This program is called by MMI0CMD.txt whenever a new command is detected. It only acts on
+*         commands relevant to the "A" unit.
+*)
+VAR_GLOBAL
+    (* Auto Mode Selected when another mode is selected *)
+    A_ALARM AT %M00170 : BOOL;
+
+    (* Stop Auto Mode *)
+    AMMISTP AT %M00138 : BOOL;
+
+    (* Base array for MMI commands. Element [62] is aliased as MMICMD: MMI command(hnds,b4activ,etc) *)
+    R00536 AT %R00536 : ARRAY[0..64] OF WORD;
+
+    (* Tank #1 Is Not In Auto Mode *)
+    T1_ALRM AT %M00173 : BOOL;
+
+    (* Tank #1 Is Stopped *)
+    T1_STP AT %M00180 : BOOL;
+END_VAR
+
+(* Rung 1: Reset Alarms and Stops for commands 28 & 29 *)
+(*
+ * Block Instruction: RANGE_INT
+ * This instruction checks if an input value is within an inclusive numerical range.
+ * Low Limit (L1): 28
+ * High Limit (L2): 29
+ * Input (IN): R00536[62] (aliased as MMICMD)
+ * The output (Q) is TRUE if IN is >= L1 AND IN is <= L2.
+ *)
+IF (R00536[62] >= 28 AND R00536[62] <= 29) THEN
+    A_ALARM := FALSE;
+    T1_ALRM := FALSE;
+    T1_STP := FALSE;
+    AMMISTP := FALSE;
+END_IF;
+
+(* Rung 2: Stop Auto Mode *)
+IF R00536[62] = 26 THEN
+    AMMISTP := TRUE;
+END_IF;
