@@ -77,7 +77,7 @@ VAR_GLOBAL
 	AUX1 AT %R00102 : ARRAY[0..4] OF WORD; (* Temp register 1 *)
 	C_45CLC AT %R00119 : INT; (* Calculated Cond in SODA 1/2 brl *)
 	COND_45 AT R00536[56] : INT; (* Required Conduct in Soda 1/2 brl *)
-	
+
 	(* Timers Data *)
 	T45CRCT AT %R00219 : TON (*ARRAY[0..3] OF WORD*); (* Soda tanks circulation timer *)
 	T45CRST AT %R00222 : TON (*ARRAY[0..3] OF WORD*); (* Soda tanks circulation stop timr *)
@@ -102,7 +102,7 @@ VAR_GLOBAL
 	XVM055 AT %M00055 : BOOL; (* FROM SODA TANK 1 TO WASTE *)
 	XVM056 AT %M00056 : BOOL; (* FROM SODA TANK 2 TO WASTE *)
 	XVM060 AT %M00060 : BOOL; (* 3-WAY VALVE FROM HEATING TO SOD *)
-	
+
 	(* Internal Memory Bits *)
 	M00221 AT %M00221 : BOOL;
 	M00224 AT %M00224 : BOOL;
@@ -117,14 +117,14 @@ VAR_GLOBAL
 	(* Timer Data (Legacy Addressing) *)
 	R00476 AT %R00476 : ARRAY[0..3] OF WORD;
 	R00536 AT %R00536 : ARRAY[0..64] OF WORD;
-		
+
 	(* Inter-rung continuation coils *)
 	rung17_cont : BOOL;
 	rung19_cont : BOOL;
 	rung34_cont : BOOL;
 	rung38_cont : BOOL;
 	_Bit : BOOL;
-	
+
 END_VAR
 VAR
 	SWITCHD : BOOL;
@@ -157,7 +157,12 @@ M00233_R_TRIG(CLK := (M00224 OR M00221) AND NOT A2_STRT AND NOT B2_STRT AND NOT 
 M00233 := M00233_R_TRIG.Q;
 
 
-(* Rung 4: T4 Soda Filling *)
+(* Rung 4-30: This block contains the state machine for the soda tanks, which cycles through filling, circulating, and conditioning states.
+    - Rung 5, 7: Initiates the filling state (`T4_FLNG`, `T5_FLNG`) when the tank level is low.
+    - Rung 29: Initiates the circulation state (`T45CIRC`) after filling is complete or after an idle timer expires.
+    - Rung 16-22: During circulation, checks if the conductivity and temperature are within their setpoints.
+    - Rung 30: Stops the circulation when the solution is fully conditioned. *)
+(* T4 Soda Filling *)
 
 (* Rung 5: Soda tank 4 filling water *)
 T4_FLNG := (NOT LOLVL4
@@ -275,13 +280,13 @@ CANSTOP := T45CRST.Q;
 (* Rung 29: SODA in circulation mode *)
 _Bit  := T4ACTIV AND(NOT TEMP4OK OR (NOT T4_FLNG AND(IDLETMR OR SWITCHD OR NOT COND_OK)));
 _Bit1 := NOT T4ACTIV AND((NOT HILVL5 AND M02050) OR (NOT T5_FLNG AND (IDLETMR OR SWITCHD)));
-IF  _Bit OR _Bit1 THEN 
+IF  _Bit OR _Bit1 THEN
 	T45CIRC := TRUE;
 END_IF;
-	
+
 IF (_Bit OR _Bit1) AND T4ACTIV THEN
 	T4LSTAF := TRUE;
-ELSE 
+ELSE
 	T4LSTAF := FALSE;
 END_IF;
 
@@ -305,10 +310,15 @@ XVM012 := #ALW_ON AND NOT WTNK_OK AND WTR2TK4;
 _Bit := (#ALW_OFF AND NOT STOPALL AND NOT ENDALL AND NOT T45_STP)
 		AND ((T4ACTIV AND HILVL4 AND XVM055) OR (NOT T4ACTIV AND HILVL5 AND NOT XVM056));
 
-(* Rung 35: FROM SODA TANK 1 TO HITING CIRC *)
+(* Rung 35-40: This block controls the outputs for the circulation and conditioning processes.
+    - Rung 35: Activates the circulation pump (`P4M68`) and valves (`XVM027`, `XVM030`).
+    - Rung 36: Opens the steam valve (`XVM040`) for heating.
+    - Rung 37, 39: Activate the dosing pump (`P4057`) and valves (`XVM018`, `XVM019`) to add concentrated soda.
+    - Rung 40: Controls the 3-way valve (`XVM060`) for the heating circuit. *)
+(* FROM SODA TANK 1 TO HITING CIRC *)
 _Bit := T45CIRC AND NOT ENDALL AND NOT STOPALL AND NOT T45_STP AND NOT T4ACTIV
 		AND(T4ACTIV AND NOT T4_FLNG)OR ( NOT T4ACTIV AND NOT T5_FLNG);
-_Bit1 := #ALW_ON AND M00301 AND ((LSL3081 AND M02050) OR LSL3067) 		
+_Bit1 := #ALW_ON AND M00301 AND ((LSL3081 AND M02050) OR LSL3067)
 XVM027 := (_Bit OR _Bit1) AND NOT M00293;
 XVM030 := (_Bit OR _Bit1) AND NOT M00294 AND M02050;
 P4M68 := (_Bit OR _Bit1);
@@ -336,7 +346,7 @@ XVM060 := (#ALW_ON AND T4ACTIV AND NOT STOPALL AND NOT ENDALL AND NOT T45_STP AN
 
 (* Rung 41: COMMENT7 *)
 
-(* Rung 42: Soda 1 tank busy *)
+(* Rung 42: Sets the `T4_BUSY` and `T5_BUSY` interlocks. A tank is considered busy if it is the inactive tank, or if the active tank is filling, circulating, or stopped. This is a critical safety feature that prevents the CIP lines from drawing soda from a tank that is not ready. *)
 _Bit := (T4ACTIV AND T4_FLNG) OR (NOT T4ACTIV AND T5_FLNG) OR T45CIRC OR T45_STP;
 T4_BUSY := _Bit AND T4ACTIV AND NOT B2_STRT;
 T5_BUSY := _Bit AND NOT T4ACTIV;

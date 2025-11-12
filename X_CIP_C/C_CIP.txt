@@ -139,7 +139,7 @@ END_IF;
 (* Rung 3 *)
 WATR_OK := C3_STRT AND NOT C_STOP AND NOT C_END AND (C_C_CLC < 5);
 
-(* Rung 4 *)
+(* Rung 4: Initiates the reactor filling process (`C_FILLS`). This is triggered by the start of any CIP stage (`C1_STRT`, `C2_STRT`, `C3_STRT`) from `C_CMD.txt`, or by the return fluid being within conductivity specs (`SODA_OK`, `ACID_OK`, `WATR_OK`). The process continues until the reactor is full (`C_FULL`). *)
 IF (C1_STRT OR SODA_OK OR ACID_OK OR WATR_OK) AND (NOT C_STOP AND NOT C_END AND NOT C_FULL) THEN
 	C_FILLS := TRUE;
 END_IF;
@@ -185,7 +185,9 @@ END_IF;
 (* Rung 12 *)
 XVM059 := #ALW_OFF AND (CIPCCDL >= 1 AND CIPCCDL <= 7);
 
-(* Rung 13 *)
+(* Rung 13-14: This block controls the supply valves for the CIP C line.
+    - Rung 13: Opens the fresh water valve (`XVM045`) during Stage 1 (pre-rinse) and Stage 3 (final rinse).
+    - Rung 14: Opens the appropriate chemical valve (`XVM046` for soda, `XVM051` for acid) during Stage 2, based on the `C2USE_S` flag. *)
 XVM045 := M00300 OR ((CANFILL AND C_FILLS) AND (C1_STRT OR C3_STRT));
 
 (* Rung 14 *)
@@ -208,7 +210,9 @@ M00083 := (XVM046 OR XVM051) AND #ALW_ON AND (R00443[0] >= 10);
 (* Rung 18 *)
 M00306 := #ALW_ON AND C_FULL AND (R09011 >= R00610);
 
-(* Rung 19: CIPR "C" TO WASTE TO "OPEN" *)
+(* Rung 19-20: This block controls the return-side valves for the CIP C line.
+    - Rung 19: Opens the waste valve (`XVM017`) if the return tanks are full (indicated by `LSH*` signals) or during the pre-rinse stage.
+    - Rung 20: Opens the appropriate return valve based on the current stage: `XVM016` for recovery water (Stage 3), `XVM015` for soda (Stage 2), and `XVM050` for acid (Stage 2). *)
 XVM017 := ((CANFILL AND NOT #ALW_OFF) OR (#ALW_ON AND C_FULL)
 			AND ((C1_STRT AND LSH3074)
 			 OR (C3_STRT AND LSH3074)
@@ -217,11 +221,11 @@ XVM017 := ((CANFILL AND NOT #ALW_OFF) OR (#ALW_ON AND C_FULL)
 
 (* Rung 20 *)
 _Bit:= C_FULL AND NOT C_STOP AND NOT C_END;
-XVM016 := _Bit AND C3_STRT AND NOT LSH3074);			
+XVM016 := _Bit AND C3_STRT AND NOT LSH3074);
 XVM015 := _Bit AND C2_STRT AND C2USE_S AND NOT LSH3079;
 XVM050 := _Bit AND C2_STRT AND NOT C2USE_S AND NOT LSH3076;
 
-(* Rung 21: CIP C ended *)
+(* Rung 21: Resets all stage and status flags for the CIP C line when the `C_END` signal is received from the command logic in `C_CMD.txt`. This ensures the system is in a clean state before the next CIP sequence begins. *)
 IF C_END THEN
 	C_FILLS := TRUE;
 	C_FULL := FALSE;

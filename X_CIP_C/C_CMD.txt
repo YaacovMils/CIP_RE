@@ -81,7 +81,11 @@ IF (CMD_S3 OR CMD_S2S OR CMD_S2A OR CMD_S1)
 	C_END := FALSE;
 END_IF;
 
-(* Rung 9: COMMENT2 *)
+(* Rung 9-14: This block forms the core of the CIP C state machine. It processes the decoded commands to start the appropriate cleaning stage, ensuring that only one stage is active at a time.
+    - Rung 10: Starts Stage 1 (`C1_STRT`) when `CMD_S1` is received.
+    - Rung 12: Starts Stage 2 (`C2_STRT`) when `CMD_S2S` (soda) or `CMD_S2A` (acid) is received, and sets the `C2USE_S` flag accordingly.
+    - Rung 14: Starts Stage 3 (`C3_STRT`) when `CMD_S3` is received. *)
+(* COMMENT2 *)
 
 (* Rung 10: CIP C stage 1 started *)
 IF CMD_S1 AND NOT C1_STRT AND NOT C2_STRT AND NOT C3_STRT AND NOT C_STOP THEN
@@ -94,7 +98,7 @@ END_IF;
 IF (CMD_S2S OR CMD_S2A) AND NOT C1_STRT AND NOT C2_STRT AND NOT C3_STRT AND NOT C_STOP THEN
 	C2_STRT := TRUE;
 	IF CMD_S2S THEN C2USE_S := TRUE;END_IF;
-	IF CMD_S2A THEN C2USE_S := FALSE;END_IF;	
+	IF CMD_S2A THEN C2USE_S := FALSE;END_IF;
 END_IF;
 
 (* Rung 13: COMMENT4 *)
@@ -106,7 +110,7 @@ END_IF;
 
 (* Rung 15: COMMENT5 *)
 
-(* Rung 16: CIP C stopped *)
+(* Rung 16: Consolidates multiple stop conditions into a single `C_STOP` flag. This is a critical safety feature that halts the CIP C sequence if a global stop (`STOPALL`), a CIP C alarm (`C_ALARM`), or an HMI stop command (`CMMISTP`) is active. *)
 C_STOP :=  NOT M00287 OR )(STOPALL OR C_ALARM OR CMMISTP OR M00285) AND NOT C_END);
 
 (* Rung 17 *)

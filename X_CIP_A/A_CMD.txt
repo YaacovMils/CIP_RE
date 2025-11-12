@@ -56,7 +56,7 @@ END_VAR
 
 (* Rung 1: COMMENT0 *)
 
-(* Rung 2: Current Reactor number for CIP A *)
+(* Rung 2: Decodes the incoming `CIPACMD`. This command is a composite integer where the upper 8 bits represent the reactor number and the lower 8 bits represent the command code. This rung extracts the reactor number and the command code using bitwise AND operations, allowing the rest of the program to use them as separate values. *)
 IF CIPACMD > 255 THEN
     A_REAC_num_ := CIPACMD AND 65280;
     CIPACMD := CIPACMD AND 255;
@@ -109,7 +109,10 @@ END_IF;
 
 (* Rung 15: COMMENT3 *)
 
-(* Rung 16: CIP A stage 1 started *)
+(* Rung 16-20: This block forms the core of the CIP A state machine. It processes the decoded commands to start the appropriate cleaning stage, ensuring that only one stage is active at a time.
+    - Rung 16: Starts Stage 1 (`A1_STRT`) when `CMD_S1` is received.
+    - Rung 18: Starts Stage 2 (`A2_STRT`) when `CMD_S2S` (soda) or `CMD_S2A` (acid) is received, and sets the `A2USE_S` flag accordingly.
+    - Rung 20: Starts Stage 3 (`A3_STRT`) when `CMD_S3` is received. *)
 IF CMD_S1 AND (NOT A1_STRT) AND (NOT A2_STRT) AND (NOT A3_STRT) AND (NOT A_STOP) THEN
     A1_STRT := TRUE;
     A1USE_R := FALSE;
@@ -122,7 +125,7 @@ IF (NOT A1_STRT) AND (NOT A2_STRT) AND (NOT A3_STRT) AND (NOT A_STOP) THEN
     IF CMD_S2S OR CMD_S2A THEN
         A2_STRT := TRUE;
     END_IF;
-    
+
     IF CMD_S2S THEN
         A2USE_S := TRUE;
     ELSIF CMD_S2A THEN
@@ -137,7 +140,7 @@ IF CMD_S3 AND (NOT A3_STRT) AND (NOT A2_STRT) AND (NOT A1_STRT) AND (NOT A_STOP)
     A3_STRT := TRUE;
 END_IF;
 
-(* Rung 21: CIP A stopped *)
+(* Rung 21: Consolidates multiple stop conditions into a single `A_STOP` flag. This is a critical safety feature that halts the CIP A sequence if a global stop (`STOPALL`), a CIP A alarm (`A_ALARM`), or an HMI stop command (`AMMISTP`) is active. *)
 A_STOP := (STOPALL OR A_ALARM OR AMMISTP OR M00299) AND (NOT A_END);
 IF A_STOP THEN
     R09060 := 555;

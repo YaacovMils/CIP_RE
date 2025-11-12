@@ -48,10 +48,13 @@ IF T1_ALRM THEN
 	T1_STP := TRUE;
 END_IF;
 
-(* Rung 2: Fresh water tank filling water *)
+(* Rung 2-5: This block contains the automatic level control logic for the fresh water tank.
+    - Rung 2: Sets the `T1_FLNG` (filling) flag when the low-level switch is active, and keeps it active until the high-level switch is reached.
+    - Rung 5: Opens the water supply valve `XVM001` to fill the tank when the `T1_FLNG` flag is active. *)
+(* Fresh water tank filling water *)
 T1_FLNG := NOT LOLVL1 OR NOT HILVL1 OR (#ALW_ON AND NOT A3_STRT AND NOT B3_STRT AND NOT C3_STRT AND AND HILVL1);
 
-(* Rung 3: Water tank busy *)
+(* Rung 3: Sets the `T1_BUSY` interlock. The tank is considered busy if it has a low level (`LOLVL1`) or is stopped (`T1_STP`). This signal is used by the CIP lines to prevent them from drawing water from an unavailable tank. The logic is bypassed if any of the CIP lines are in their final rinse stage (`A3_STRT`, `B3_STRT`, `C3_STRT`). *)
 T1_BUSY := (NOT LOLVL1 OR T1_STP) AND NOT A3_STRT AND NOT B3_STRT AND NOT C3_STRT;
 
 (* Rung 4 *)

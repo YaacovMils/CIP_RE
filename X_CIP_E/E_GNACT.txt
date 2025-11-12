@@ -26,7 +26,7 @@ A key function of this program is managing the return path of the cleaning solut
 - `XV4234_Cmd` (%M01708) (BOOL): Command to open the valve to supply CIP from the Soda 1 Tank.
 - `XV4228_Cmd` (%M01709) (BOOL): Command to open the valve to supply CIP from the Soda 2 Tank.
 - `XV4231_Cmd` (%M01710) (BOOL): Command to open the valve to supply Fresh Water.
-- `XV4281_Cmd` (%M01711) (BOOL): Command to open the main valve from the CIP line to the Drain.
+- `XV4281_Cmd` (%M01711) (BOOL): Command to open the main valve from the CIP line to the drain.
 - `P4269_Cmd` (%M01712) (BOOL): Command to start the main CIP E pump.
 
 @notes
@@ -86,7 +86,7 @@ VAR_GLOBAL
 	LSL3075 AT %I00075 : BOOL; (* WATER RECOVERY TANK LOW LEVEL *)
 	M00140 AT %M00140 : BOOL; (* T1_Repl_T2 *)
 	P4269_Cmd AT %M01712 : BOOL;
-	P4269_Cmd_Temp AT %M01303 : BOOL;	
+	P4269_Cmd_Temp AT %M01303 : BOOL;
 	Rx1_Cooker_Step_R30 AT %R09801 : WORD; (* Signal From Cooker *)
 	Rx_Hold_E_SEQ_R30 AT %M01803 : BOOL; (* Signal From Cooker *)
 	SEC_PLS AT %G00001 : BOOL;
@@ -117,7 +117,13 @@ VAR
 	_Bit : BOOL;
 END_VAR
 
-(* Rung 1: BackToRecoveryTank open XV4208 *)
+(* Rung 1-18: This block controls the return-side valves, routing the fluid to the correct destination based on conductivity readings and tank levels.
+    - Rung 2-6: Determine the return path based on conductivity and tank levels (`BackToRecoveryTank`, `BackToSodaTank`, `BackToDarin`).
+    - Rung 8: Opens the recovery water return valve (`XV4208_Cmd`).
+    - Rung 11: Opens the acid return valve (`XV4206_Cmd`).
+    - Rung 14, 16: Open the soda return valves (`XV4202_Cmd`, `XV4204_Cmd`).
+    - Rung 18: Opens the drain valve (`XV4211_Cmd`). *)
+(* BackToRecoveryTank open XV4208 *)
 
 (* Rung 2: BackToRecoveryTank *)
 BackToRecoveryTank := ((NOT HiConductivitySoda)OR (HiConductivitySoda AND LSH3079))
@@ -181,7 +187,12 @@ XV4211_Cmd := E_Step1
 	OR ((E_Step61 OR E_Step62 OR E_Step63 OR E_Step64) AND (NOT HiConductivityAci OR LSH3076)
 	OR ((E_Step81 OR E_Step82 OR E_Step84 OR E_Step88 OR E_Step89 OR E_Step90) AND BackToDarin);
 
-(* Rung 19: XV4225 CIP_E From Water Recovery Tank *)
+(* Rung 19-30: This block controls the supply-side valves for the CIP E line, selecting the correct fluid source based on the current step of the state machine.
+    - Rung 20: Opens the recovery water valve (`XV4225_Cmd`).
+    - Rung 22: Opens the acid valve (`XV4236_Cmd`).
+    - Rung 25, 27: Open the soda valves (`XV4234_Cmd`, `XV4228_Cmd`).
+    - Rung 29: Opens the fresh water valve (`XV4231_Cmd`). *)
+(* XV4225 CIP_E From Water Recovery Tank *)
 
 (* Rung 20: XV4225_Cmd *)
 XV4225_Cmd := ((E_Step1 OR ((E_Step2 OR E_Step3 OR E_Step8 OR E_Step9) AND #ALW_OFF)))
@@ -240,7 +251,8 @@ XV4281_Cmd := ((E_Step1 OR E_Step2 OR E_Step3 OR E_Step8 OR E_Step9) AND NOT M00
 	OR E_Step81
 	OR E_Step90;
 
-(* Rung 33: P4269_Start *)
+(* Rung 33-38: This block controls the main CIP E pump (`P4269_Cmd`). The pump is activated after a 20-second delay (`Dly_P4269`) when any of the cleaning or rinsing steps are active, and there are no active hold or stop commands. *)
+(* P4269_Start *)
 (* Rung 34 *)
 FQ207_Real := INT_TO_REAL(FQ207);
 

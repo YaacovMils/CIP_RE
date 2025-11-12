@@ -25,6 +25,8 @@ The execution order is as follows:
 - This file is another clear example of the modular and structured programming methodology used in this project. It provides an excellent high-level overview of the entire scan cycle for the CIP E process.
 - The deliberate order of execution (I/O -> Logic -> Outputs) is a fundamental best practice for robust PLC programming.
 *)
+
+(* This master routine orchestrates the entire CIP E process by calling a series of sub-programs in a specific order. This modular approach separates I/O handling, error checking, sequencing logic, and physical output control into distinct files, making the system easier to manage and troubleshoot. *)
 VAR_GLOBAL
 END_VAR
 

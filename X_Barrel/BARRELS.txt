@@ -66,24 +66,24 @@ END_VAR
 
 (* Rung 1: COMMENT0 *)
 
-(* Rung 2: Barrel is full *)
+(* Rung 2: Checks if the barrel is full. This is true when the barrel CIP process is active (`BR_WORK`) and the totalized volume from CIP C (`FQCCQTY`) has reached the target setpoint (`R00455`), which is set from the HMI via `CIPCVOL`. *)
 FULL := BR_WORK AND (BR_ST1 OR BR_ST2 OR BR_ST3) AND (FQCCQTY >= R00455)) ;
 
 (* Rung 3 *)
 
-(* Rung 4 *)
+(* Rung 4: Sets the target fill volume (`R00455`) to a default of 500 if the HMI setpoint (`CIPCVOL`) is zero. This prevents accidental zero-volume fills. The `#ALW_OFF` condition is likely a placeholder or disabled logic. *)
 IF #ALW_OFF AND (CIPCVOL = 0) THEN
 	R00455 := 500;
 END_IF;
 
-(* Rung 5 *)
+(* Rung 5: Sets the target fill volume (`R00455`) to the value entered on the HMI (`CIPCVOL`). This is the primary way the fill volume is controlled. The `#ALW_OFF` condition is likely a placeholder or disabled logic. *)
 IF #ALW_OFF AND (CIPCVOL > 300) THEN
 	R00455 := CIPCVOL;
 END_IF;
 
 (* Rung 6: COMMENT1 *)
 
-(* Rung 7: CIP C washes barrel *)
+(* Rung 7: Determines if the CIP C line is actively washing. This is true when the barrel CIP is running (`BR_WORK`), there are no global stop commands, and bit 8 of the CIP C status word (`C_STAT`) is active, indicating a CIP C alarm is NOT present. See C_U_ST.txt, Rung 6. *)
 WASH := BR_WORK AND NOT STOPALL AND NOT ENDALL AND NOT BR_END AND ((C_STAT AND 128) <> 0);
 
 (* Rung 8: Flush barrel *)
@@ -97,7 +97,7 @@ FILL := NOT FULL AND ((BR_ST1 OR NOT WASH AND BR_ST2) OR BR_ST3)
 
 (* Rung 10: COMMENT2 *)
 
-(* Rung 11: CIP ended (bit 7 in status) *)
+(* Rung 11: Checks for the "CIP Ended" signal from the CIP C controller. This is true when bit 7 of the `C_STAT` word is set, indicating that the CIP C line is in a "Ready/Idle" state. This signal is used to trigger the next stage in the barrel cleaning sequence. See C_U_ST.txt, Rung 8. *)
 CIP_END := BR_WORK AND ((C_STAT AND 64) <> 0);
 
 (* Rung 12: Temp tank empty=barrel empty *)
@@ -121,7 +121,12 @@ P4072 := XVM039 AND LSL3073;
 
 (* Rung 17: COMMENT4 *)
 
-(* Rung 18: CIP C command (local-no genius) *)
+(* Rung 18-25: This block of rungs forms the core of the barrel washing state machine. It sends commands to the CIP C controller via the `CIPCCDL` register to sequence through the cleaning stages.
+    - Rung 24: At the start (`NOT BR_ST1 AND NOT BR_ST2 AND NOT BR_ST3`), it sends command 1 to start Stage 1.
+    - Rung 22-23: When Stage 1 is complete (`CIP_END` and `BR_ST1`), it sends command 2 or 3 to start Stage 2 (Soda or Acid wash, based on `BR2USES`).
+    - Rung 21: When Stage 2 is complete (`CIP_END` and `BR_ST2`), it sends command 4 to start Stage 3.
+    - Rung 20: When Stage 3 is complete (`CIP_END` and `BR_ST3`), it sets the `BR_END` flag.
+    - Rung 18 & 25: It sends command 7 to end the sequence when a stage is complete (`END_STG`) or the entire process is finished (`BR_END`). *)
 IF BR_WORK AND END_STG AND NOT CIP_END THEN
 	CIPCCDL := 7;
 END_IF;
@@ -173,11 +178,7 @@ IF BR_END THEN
 	BR_ST3 := FALSE;
 END_IF;
 
-(* Rung 26 *)
+(* Rung 26-28: Copies the internal barrel stage flags (`BR_ST1`, `BR_ST2`, `BR_ST3`) to global memory addresses (`M00061`, `M00062`, `M00063`). This is likely for use by other processes, such as the HMI, to display the current stage of the barrel cleaning sequence. *)
 M00061 := BR_ST1;
-
-(* Rung 27 *)
 M00062 := BR_ST2;
-
-(* Rung 28 *)
 M00063 := BR_ST3;

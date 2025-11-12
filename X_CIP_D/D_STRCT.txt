@@ -187,8 +187,8 @@ END_IF;
 (* Rung 19  *)
 _Bit := Rx_Cooker_Switch AND NOT Rx_Hold_D_SEQ AND NOT Rx_Cooker_Fault AND NOT D_Farm_FLT AND NOT D_Step0
 		AND SEC_PLS AND (MonitorAct < MonitorPre);
-		
-(* Rung 20 *)		
+
+(* Rung 20 *)
 IF _Bit THEN
 	MonitorAct := MonitorAct + 1;
 END_IF;
@@ -211,7 +211,11 @@ Monitor_Vol := (D_Step1 OR D_Step21 OR D_Step28 OR D_Step41 OR D_Step61 OR D_Ste
 (* Rung 26:*)
 MonitorDwn_FQ := FIT107_Pre - FIT107_Count;
 
-(* Rung 27: COMMENT8 *)
+(* Rung 27-30: This block handles the reset logic for the CIP D sequence.
+    - Rung 28: Resets the stepper to step 0 when the `RST_D` button is pressed on the HMI.
+    - Rung 29: Resets the elapsed time counter.
+    - Rung 30: Resets the monitoring timers and counters when a new step is initiated, or the sequence is reset or aborted. *)
+(* COMMENT8 *)
 
 (* Rung 28: HMI Button Reset Steper *)
 IF RST_D THEN
@@ -242,11 +246,14 @@ _Bit := (((NOT T3_BUSY AND COND_OK AND TEMP_OK)
 		   OR (CIP_Soda))
 		 AND (NOT T4_BUSY OR NOT T5_BUSY OR CIP_Acid))
 		OR CIP_Rinsing;
-		
-(* Rung 35: *)		
+
+(* Rung 35: *)
 CIP_D_FarmeCondition := _Bit AND NOT T1_BUSY AND NOT D_Farm_FLT AND D_Step0 AND NOT STOPALL;
 
-(* Rung 36: COMMENT11 *)
+(* Rung 36-38: This block handles the initial state transition of the CIP D state machine. When the system is in the idle state (`D_Step0`) and a start command is received (`Rx_Start_CIP_D`), this logic jumps the `D_Steper` to the first step of the appropriate sequence.
+    - Rung 37: Jumps to step 1 for non-rinsing cycles (Soda, Acid, All).
+    - Rung 38: Jumps to step 81 for rinsing cycles. *)
+(* COMMENT11 *)
 
 (* Rung 37: D_Step0 - Start Non-Rinsing *)
 IF D_Step0 AND NOT Step_Jump AND NOT Rx_Hold_D_SEQ AND CIP_D_FarmeCondition AND Rx_Start_CIP_D AND NOT CIP_Rinsing THEN
@@ -260,7 +267,8 @@ IF D_Step0 AND NOT Step_Jump AND NOT Rx_Hold_D_SEQ AND CIP_D_FarmeCondition AND 
     Step_Jump := TRUE;
 END_IF;
 
-(* Rung 39: COMMENT12 *)
+(* Rung 39-103: This block constitutes the main body of the CIP D state machine. It is a stepper that advances sequentially from one step to the next based on various conditions. Each rung checks if the `D_Steper` is at a specific step and then evaluates the conditions (e.g., `Monitor_Vol`, `MonitorTime`, `LSL1_1_8_Dly_Off`) to transition to the next step. The `Step_Jump` variable is used to ensure only one transition occurs per scan. The sequence branches at several points (e.g., Rung 48, 64, 65) based on the selected CIP type (`CIP_All`, `CIP_Soda`, `CIP_Acid`). The machine terminates by jumping back to step 0. *)
+(* COMMENT12 *)
 
 (* Rung 40: D_Step1 *)
 IF D_Step1 AND NOT Step_Jump AND NOT Rx_Hold_D_SEQ AND (Monitor_Vol OR MonitorTime) THEN
@@ -532,7 +540,7 @@ IF Step_Jump THEN
     Step_Jump := FALSE;
 END_IF;
 
-(* Rung 105: CIP_Ended Timer - 5 seconds delay *)
+(* Rung 105: Resets the `CIP_Ended` flag after a 5-second delay. This ensures the flag is visible to other parts of the system for a short period before being cleared for the next sequence. *)
 DlyOffCipEnd(IN := CIP_Ended1, PT := T#5S);
 IF DlyOffCipEnd.Q THEN
 	CIP_Ended := FALSE;
