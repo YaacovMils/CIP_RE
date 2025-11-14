@@ -82,15 +82,16 @@ VAR
 	FB_T3CRSTM : RTO;
 END_VAR
 
-(* Rung 1: מיכל T3 עצירה יזומה *)
+(* Rung 1: Consolidates multiple stop conditions into a single `T3_STP` flag. This is a critical safety feature that halts the acid tank's operations if a tank-specific alarm (`T3_ALR`), a global stop (`STOPALL`), an HMI stop command (`T3MMIST`), or a global end (`ENDALL`) is active. *)
 T3_STP := T3_ALR OR STOPALL OR T3MMIST OR ENDALL;
 
-(* Rung 2-14: This block contains the state machine for the acid tank, which cycles through filling, circulating, and conditioning states.
-    - Rung 2: Initiates the filling state (`T3_FLNG`) when the tank level is low (`LOLVL3`).
-    - Rung 4: Initiates the circulation state (`T3_CIRC`) after filling is complete or after an idle timer expires.
-    - Rung 11-12: During circulation, checks if the conductivity (`COND_OK`) and temperature (`TEMP_OK`) are within their setpoints.
-    - Rung 14: Stops the circulation when the solution is fully conditioned. *)
-(* מיכל מים אסידי T3 - מלוי *)
+(* Rungs 2-14: This block contains the state machine for the acid tank, which cycles through filling, circulating, and conditioning states.
+    - Rung 2: Initiates the filling state (`T3_FLNG`) when the tank level is low (`LOLVL3`). The filling is interlocked to prevent it from starting if any CIP line is currently using the acid tank.
+    - Rung 3: An idle timer that triggers the circulation state if the tank has been idle for 15 minutes.
+    - Rung 4: Initiates the circulation state (`T3_CIRC`) after filling is complete or after the idle timer expires.
+    - Rungs 8-10: Timers that ensure the circulation runs for a minimum amount of time before the conditioning logic is enabled.
+    - Rungs 11-12: During circulation, checks if the conductivity (`COND_OK`) and temperature (`TEMP_OK`) are within their setpoints.
+    - Rung 13-14: Stops the circulation when the solution is fully conditioned. *)
 T3_FLNG := ((NOT HILVL3) AND (NOT A2_STRT) AND (NOT B2_STRT) AND (NOT C2_STRT)
 			 OR (T3_FLNG AND (NOT HILVL3))
 			 OR (#ALW_ON AND (NOT LOLVL3)));
@@ -159,16 +160,16 @@ END_IF;
 
 (* Rung 15 COMMENT2 *)
 
-(* Rung 16 *)
+(* Rung 16: Opens the water fill valve (`XVM014`) when the tank is in the filling state (`T3_FLNG`). The valve will not open if the system is stopped or if any CIP line is currently using the acid tank. *)
 XVM014 := (NOT D_Step61) AND (NOT D_Step62) AND (NOT D_Step63) AND (NOT D_Step64) AND (NOT D_Step68) AND (NOT D_Step69) AND (NOT STOPALL) AND (NOT ENDALL) AND (NOT T3_STP) AND T3_FLNG;
 
 (* Rung 17: DEBUG: View current state *)
 (* _Bit := (NOT STOPALL) AND (NOT ENDALL) AND HILVL3 AND (NOT T3_STP) AND XVM054; *)
 
 (* Rung 18: Activates the outputs for the circulation and conditioning processes.
-    - `XVM033` and `P4M67`: Opens the circulation valve and starts the circulation pump.
-    - `XVM041`: Opens the heat exchanger valve if the temperature is not at setpoint.
-    - `XVM058`: Opens the dosing valve to add concentrated acid if the conductivity is not at setpoint. *)
+    - `XVM033` and `P4M67`: Opens the circulation valve and starts the circulation pump when the tank is in the circulation state.
+    - `XVM041`: Opens the heat exchanger valve during circulation if the temperature is not at setpoint.
+    - `XVM058`: Opens the dosing valve to add concentrated acid during circulation if the conductivity is not at setpoint. *)
 _Bit := T3_CIRC AND (NOT ENDALL) AND (NOT STOPALL) AND (NOT T3_FLNG) AND (NOT T3_STP);
 XVM033 := _Bit;
 P4M67  := _Bit;
@@ -178,5 +179,5 @@ XVM058 := _Bit AND CANMSR AND (NOT COND_OK) AND P3085;
 (* Rung 19 COMMENT3 *)
 
 
-(* Rung 20: Sets the `T3_BUSY` interlock. The acid tank is considered busy if it is filling (`T3_FLNG`), circulating (`T3_CIRC`), or stopped (`T3_STP`). This signal is used by the CIP lines to prevent them from drawing acid from an unavailable tank. *)
+(* Rung 20: Sets the `T3_BUSY` interlock. The acid tank is considered busy if it is not filling, or if it is circulating, or if it is stopped. This signal is a critical interlock used by the CIP lines to prevent them from drawing acid from an unavailable tank. *)
 T3_BUSY := (NOT T3_FLNG OR T3_CIRC OR T3_STP) AND NOT M00206 ;

@@ -110,32 +110,31 @@ VAR_GLOBAL
 	XVM048 AT %M00048 : BOOL; (* XV4048 CIP "B" Pump Discharge *)
 END_VAR
 
-(* Rung 1 *)
-
+(* Rung 1: Checks if the returning acid solution's conductivity is within the acceptable range. This flag (`ACID_OK`) is a key interlock for the return valve logic, determining whether the acid can be reclaimed or must be sent to waste. The check is active only during Stage 2 (`B2_STRT`) of the CIP B sequence when an acid wash (`NOT B2USE_S`) is selected. *)
 ACID_OK := B2_STRT AND NOT B2USE_S AND NOT B_STOP AND NOT B_END AND (C_B_CLC >= (COND_3 - 0));
 
-(* Rung 2 *)
+(* Rung 2: Checks if the returning soda solution's conductivity is within the acceptable range. This flag (`SODA_OK`) is a key interlock for the return valve logic, determining whether the soda can be reclaimed or must be sent to waste. The check is active only during Stage 2 (`B2_STRT`) of the CIP B sequence when a soda wash (`B2USE_S`) is selected. *)
 SODA_OK := B2_STRT AND B2USE_S AND NOT B_STOP AND NOT B_END AND (C_B_CLC >= (COND_45 - 0));
 
-(* Rung 3 *)
+(* Rung 3: Checks if the returning water conductivity is low enough to be considered a final rinse. This flag (`WTR_OK`) signals that the system is clean and the CIP sequence can proceed to the next step. The check is active only during Stage 3 (`B3_STRT`) of the CIP B sequence. *)
 WTR_OK := B3_STRT AND NOT B_STOP AND NOT B_END AND (C_B_CLC < 20);
 
-(* Rung 4: Initiates the reactor filling process (`B_FILLS`). This is triggered by the start of any CIP stage (`B1_STRT`, `B2_STRT`, `B3_STRT`) from `B_CMD.txt`, or by the return fluid being within conductivity specs (`SODA_OK`, `ACID_OK`, `WTR_OK`). The process continues until the reactor is full (`B_FULL`). *)
+(* Rung 4: Latches the reactor filling process (`B_FILLS`). This command is initiated by the start of any CIP stage (`B1_STRT`, `B2_STRT`, `B3_STRT`) from `B_CMD.txt` or when the return fluid conductivity is acceptable (`SODA_OK`, `ACID_OK`, `WTR_OK`), allowing for a top-up. `B_FILLS` serves as the primary enable signal for the supply valves and pump logic in the subsequent rungs and remains active until the reactor is full (`B_FULL`). *)
 IF (B1_STRT OR SODA_OK OR ACID_OK OR WTR_OK) AND NOT B_STOP AND NOT B_END AND NOT B_FULL THEN
 	B_FILLS := TRUE;
 END_IF;
 
-(* Rung 5 *)
+(* Rung 5: Determines if a fill is permissible by checking for resource availability. This `CANFILL` flag is a key interlock that prevents the CIP B sequence from starting if the required source tank (e.g., Water, Acid, Soda) is currently in use by another process (`T1_BUSY`, `T2_BUSY`, `T3_BUSY`). It ensures that two processes do not attempt to use the same tank simultaneously. *)
 CANFILL := (B1_STRT AND (NOT T1_BUSY OR NOT T2_BUSY))
 			OR (B2_STRT AND (B2USE_S AND #ALW_ON AND (T4ACTIV OR NOT T4ACTIV)) OR NOT B2USE_S AND NOT T3_BUSY)
 			OR (B3_STRT AND NOT T1_BUSY)
 			AND NOT B_STOP AND NOT B_END
 
-(* Rung 6 *)
+(* Rung 6: Detects when the target fill volume has been reached. This logic compares the accumulated volume from the flowmeter (`R00450`), which is pulsed by `FQCBPLS` from the `FQC` program, with the target volume (`CIPBVOL`) specified in `B_CMD.txt`. The result (`_Bit`) is used in the next rung to latch the `B_FULL` flag. *)
 _Bit := FQCBPLS AND CANFILL AND (B_FILLS OR B2_STRT) AND NOT #ALW_OFF AND (R00450 >= CIPBVOL)
 
 
-(* Rung 7 *)
+(* Rung 7: Latches the `B_FULL` flag once the target volume is reached and simultaneously de-latches the `B_FILLS` command. This action stops the filling process by disabling the supply valves and pump. The `B_FULL` flag serves as a key interlock to prevent overfilling and signals to `B_CMD.txt` that the fill stage is complete. *)
 IF (_Bit AND NOT M00220) OR (#ALW_ON AND M00221 AND CANFILL AND #ALW_ON) THEN
 	B_FULL := TRUE;
 	B_FILLS := FALSE;
@@ -187,33 +186,23 @@ _Bit:= #ALW_OFF AND XVM020 AND (CIPBCMD >= 1 AND CIPBCMD <= 7)
     - Rung 17: Opens the fresh water valve (`XVM026`) for Stage 3 (final rinse) or Stage 1 if recovery water is unavailable.
     - Rung 19: Opens the recovery water valve (`XVM037`) for Stage 1 (pre-rinse).
     - Rung 21-25: Open the appropriate chemical valve (`XVM029`, `XVM032`, `XVM035`) for Stage 2, based on whether soda or acid is selected. *)
-(* XV04026 *)
-
-(* Rung 17 *)
+(* Rung 17: Opens the fresh water supply valve (`XVM026`). This valve is opened during Stage 3 (final rinse) or during Stage 1 (pre-rinse) if the recovery water tank (`T2_BUSY`) is unavailable. This ensures that the process can continue even if the preferred water source is not available. *)
 XVM026 := CANFILL AND NOT B_FULL AND ((B1_STRT AND T2_BUSY) OR B3_STRT)) AND NOT T1_BUSY;
 
 (* Rung 18 *)
-(* XV4037 *)
-
-(* Rung 19 *)
+(* Rung 19: Opens the recovery water supply valve (`XVM037`). This valve is opened during Stage 1 (pre-rinse) to use reclaimed water, which is a more environmentally friendly and cost-effective option than using fresh water. *)
 XVM037 := CANFILL AND NOT B_FULL AND B1_STRT AND NOT T2_BUSY;
 
 (* Rung 20 *)
-(* XV4029 Soda1 Bottom *)
-
-(* Rung 21 *)
+(* Rung 21: Opens the supply valve for Soda Tank 1 (`XVM029`). This valve is opened during Stage 2 of the CIP B sequence when a soda wash is selected (`B2USE_S`) and Soda Tank 1 is the active tank (`T4ACTIV`). *)
 XVM029 := CANFILL AND NOT B_FULL AND B2_STRT AND B2USE_S AND T4ACTIV;
 
 (* Rung 22 *)
-(* XV4032 *)
-
-(* Rung 23 *)
+(* Rung 23: Opens the supply valve for Soda Tank 2 (`XVM032`). This valve is opened during Stage 2 of the CIP B sequence when a soda wash is selected (`B2USE_S`) and Soda Tank 1 is not the active tank (`NOT T4ACTIV`). The logic also includes a low-level interlock (`LOLVL4`) to prevent the pump from running dry. The `M02050` flag indicates that the Soda Tank 2 is not canceled. *)
 XVM032 := CANFILL AND NOT B_FULL AND B2_STRT AND B2USE_S AND NOT LOLVL4 AND M02050;
 
 (* Rung 24 *)
-(* XV4035 *)
-
-(* Rung 25 *)
+(* Rung 25: Opens the acid supply valve (`XVM035`). This valve is opened during Stage 2 of the CIP B sequence when an acid wash is selected (`NOT B2USE_S`). *)
 XVM035 := CANFILL AND NOT B_FULL AND B2_STRT AND NOT B2USE_S;
 
 (* Rung 26 *)
@@ -222,11 +211,11 @@ XVM035 := CANFILL AND NOT B_FULL AND B2_STRT AND NOT B2USE_S;
 (* Rung 27 *)
 PSB_WRK := (CMDPLC4 = 0);
 
-(* Rung 28 *)
+(* Rung 28: Opens the main CIP B supply valve (`XVM048`). This valve is opened whenever a fill is permissible (`CANFILL`) and the reactor is not full (`NOT B_FULL`). It is the main isolation valve for the entire CIP B process. The `_Bit` variable is used in the next rung to start the pump. *)
 XVM048 := CANFILL AND NOT B_FULL AND (B1_STRT OR B2_STRT OR B3_STRT) ;
 _Bit := XVM048 AND PSB_WRK;
 
-(* Rung 29 *)
+(* Rung 29: Starts the CIP B supply pump (`P4M65`) after a 5-second delay. This timer (`R00430`) ensures that the main supply valve (`XVM048`) is fully open before the pump starts, which prevents a water hammer effect and protects the equipment from damage. *)
 R00430(IN := (_Bit),
 	   PT := 5s
 	   );
@@ -250,9 +239,12 @@ M00305 := #ALW_ON AND B2_STRT AND (R09010 >= R00610);
     - Rung 34: Opens the waste valve (`XVM010`) if the return tanks are full or during the pre-rinse stage.
     - Rung 36: Opens the recovery water valve (`XVM009`) during the final rinse.
     - Rung 38-41: Open the appropriate chemical return valve (`XVM003`, `XVM005`, `XVM007`) during Stage 2. *)
-(* XV4010 *)
-
-(* Rung 34 *)
+(* Rung 34: Opens the waste valve (`XVM010`), directing the return fluid to the drain. This occurs under several conditions:
+    - During Stage 1 (pre-rinse), the initial dirty water is always sent to waste.
+    - During Stage 2 (chemical wash), if the corresponding return tank is full (indicated by `LSH3079`, `LSH3068`, or `LSH3076`).
+    - During Stage 3 (final rinse), if the recovery water tank is full (`LSH3074`).
+    - If the `RET_WAT` (Return Water) flag is active and the recovery water valve (`XVM009`) is not open.
+This logic ensures that the system does not overflow the return tanks and that the pre-rinse water is properly disposed of. *)
 XVM010 := ((CANFILL AND NOT B_FILLS AND (B_FULL OR LSH3079) AND B2_STRT AND ((LSH3079 AND B2USE_S)
 																		   OR (LSH3068 AND NOT XVM003 AND B2USE_S)
 																		   OR (NOT B2USE_S AND LSH3076)))
@@ -264,25 +256,19 @@ XVM010 := ((CANFILL AND NOT B_FILLS AND (B_FULL OR LSH3079) AND B2_STRT AND ((LS
 
 
 (* Rung 35 *)
-(* XV4009 CIPR "B" Recovery Water Fill *)
-
-(* Rung 36 *)
+(* Rung 36: Opens the recovery water return valve (`XVM009`). This valve is opened during Stage 3 (final rinse) to reclaim the clean rinse water for future use. The `LSH3074` interlock prevents the valve from opening if the recovery water tank is full. *)
 XVM009 := (NOT B_STOP AND NOT B_END AND B3_STRT AND NOT LSH3074) OR (RET_WAT AND NOT LSH3074);
 
 (* Rung 37 *)
-(* XV4003 CIPR "B" Fill Soda1 Tank *)
-
-(* Rung 38 *)
+(* Rung 38: Opens the return valve for Soda Tank 1 (`XVM003`). This valve is opened during Stage 2 of the CIP B sequence when a soda wash is selected (`B2USE_S`), Soda Tank 1 is the active tank (`T4ACTIV`), and the tank is not full (`NOT LSH3079`). *)
 XVM003 := B2_STRT AND NOT B_STOP AND NOT B_END AND B2USE_S AND T4ACTIV AND NOT LSH3079;
 
 (* Rung 39 *)
-(* XV4005 CIPR "B" Fill Soda2 Tank *)
-
-(* Rung 40 *)
+(* Rung 40: Opens the return valve for Soda Tank 2 (`XVM005`). This valve is opened during Stage 2 of the CIP B sequence when a soda wash is selected (`B2USE_S`), Soda Tank 1 is not the active tank (`NOT T4ACTIV`), and the tank is not full (`NOT LSH3068`). The `M02050` flag indicates that the Soda Tank 2 is not canceled. *)
 XVM005 := B2_STRT AND NOT B_STOP AND NOT B_END AND T4ACTIV AND NOT LSH3068 AND M02050;
 
 (* Rung 41 *)
-(* XV4007 *)
+(* Rung 41: Opens the acid return valve (`XVM007`). This valve is opened during Stage 2 of the CIP B sequence when an acid wash is selected (`NOT B2USE_S`) and the acid tank is not full (`NOT LSH3076`). *)
 XVM007 := (B2_STRT AND NOT B_STOP AND NOT B_END AND NOT B2USE_S) OR (#ALW_OFF AND RET_WAT AND NOT LSH3076 AND NOT #ALW_OFF);
 
 (* Rung 42: Resets all stage and status flags for the CIP B line when the `B_END` signal is received from the command logic in `B_CMD.txt`. This ensures the system is in a clean state before the next CIP sequence begins. *)

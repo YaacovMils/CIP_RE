@@ -66,74 +66,69 @@ END_VAR
 
 (* Rung 1: COMMENT0 *)
 
-(* Rung 2: Checks if the barrel is full. This is true when the barrel CIP process is active (`BR_WORK`) and the totalized volume from CIP C (`FQCCQTY`) has reached the target setpoint (`R00455`), which is set from the HMI via `CIPCVOL`. *)
+(* Rung 2: Checks if the barrel is full by comparing the delivered volume from CIP C (`FQCCQTY`) to the setpoint (`R00455`). This `FULL` flag is a key interlock for the filling and flushing logic. *)
 FULL := BR_WORK AND (BR_ST1 OR BR_ST2 OR BR_ST3) AND (FQCCQTY >= R00455)) ;
 
 (* Rung 3 *)
 
-(* Rung 4: Sets the target fill volume (`R00455`) to a default of 500 if the HMI setpoint (`CIPCVOL`) is zero. This prevents accidental zero-volume fills. The `#ALW_OFF` condition is likely a placeholder or disabled logic. *)
+(* Rung 4: Sets a default fill volume of 500 if no value is provided from the HMI. This logic is currently disabled. *)
 IF #ALW_OFF AND (CIPCVOL = 0) THEN
 	R00455 := 500;
 END_IF;
 
-(* Rung 5: Sets the target fill volume (`R00455`) to the value entered on the HMI (`CIPCVOL`). This is the primary way the fill volume is controlled. The `#ALW_OFF` condition is likely a placeholder or disabled logic. *)
+(* Rung 5: Sets the target fill volume from the HMI. This logic is currently disabled. *)
 IF #ALW_OFF AND (CIPCVOL > 300) THEN
 	R00455 := CIPCVOL;
 END_IF;
 
 (* Rung 6: COMMENT1 *)
 
-(* Rung 7: Determines if the CIP C line is actively washing. This is true when the barrel CIP is running (`BR_WORK`), there are no global stop commands, and bit 8 of the CIP C status word (`C_STAT`) is active, indicating a CIP C alarm is NOT present. See C_U_ST.txt, Rung 6. *)
+(* Rung 7: Determines if the CIP C line is actively washing by checking bit 8 of the `C_STAT` word. This bit is set when a CIP C alarm is NOT present. *)
 WASH := BR_WORK AND NOT STOPALL AND NOT ENDALL AND NOT BR_END AND ((C_STAT AND 128) <> 0);
 
-(* Rung 8: Flush barrel *)
+(* Rung 8: Determines when to flush the barrel. This occurs when the barrel is full or when the CIP C line is washing during stages 2 or 3. *)
 FLUSH := (WASH AND (BR_ST3 OR BR_ST2))
 		  OR (FULL AND (BR_ST1 BR_ST2 OR BR_ST3))
 		  AND NOT C_STOP AND NOT STOPALL AND NOT ENDALL AND NOT BR_END;
 
-(* Rung 9: Fill barrel *)
+(* Rung 9: Determines when to fill the barrel. This occurs when the barrel is not full and the current stage is active. *)
 FILL := NOT FULL AND ((BR_ST1 OR NOT WASH AND BR_ST2) OR BR_ST3)
 		AND NOT STOPALL AND NOT ENDALL AND NOT BR_END;
 
 (* Rung 10: COMMENT2 *)
 
-(* Rung 11: Checks for the "CIP Ended" signal from the CIP C controller. This is true when bit 7 of the `C_STAT` word is set, indicating that the CIP C line is in a "Ready/Idle" state. This signal is used to trigger the next stage in the barrel cleaning sequence. See C_U_ST.txt, Rung 8. *)
+(* Rung 11: Checks for the "CIP Ended" signal from the CIP C controller by checking bit 7 of the `C_STAT` word. This signal is used to trigger the next stage in the barrel cleaning sequence. *)
 CIP_END := BR_WORK AND ((C_STAT AND 64) <> 0);
 
-(* Rung 12: Temp tank empty=barrel empty *)
+(* Rung 12: A 40-second timer that determines the end of a stage. The timer starts when the barrel is being flushed and the CIP C line is not washing. *)
 TON_CIPCTMR(IN := (NOT WASH AND FLUSH AND NOT C_STOP (AND NOT M00280 OR NOT LSH3072)) AND #ALW_ON,
 			PT := T#40S);
 END_STG := TON_CIPCTMR.Q;
 
 (* Rung 13: COMMENT3 *)
 
-(* Rung 14: FROM CIP C TANK TO TEMP. TANK T *)
+(* Rung 14: This logic for `XVM038` (valve to temporary tank) appears to be incomplete as it only reads the state of the valve and does not drive it. *)
 _Bit := NOT FILL AND NOT C_STOP AND NOT STOPALL AND NOT ENDALL AND NOT BR_END AND XVM038;
 
-(* Rung 15 *)
+(* Rung 15: A 30-second timer that is activated when the barrel is full and the temporary tank is full. The output of this timer is used in the logic for the temporary tank return pump. *)
 TON_R09066(IN := #ALW_ON AND FULL AND LSH3072,
 		   PT := T#30S);
 M00280 := NOT TON_R09066.Q;
 
-(* Rung 16: FROM TEMP. TANK TO CIPS "C" TO *)
+(* Rung 16: Controls the return pump (`P4072`) and valve (`XVM039`) for the temporary tank. The pump is activated when the valve is open and the tank is not empty. *)
 XVM039 := #ALW_ON AND NOT BR_END AND (M00280 OR(XVM039 AND P4072));
 P4072 := XVM039 AND LSL3073;
 
 (* Rung 17: COMMENT4 *)
 
-(* Rung 18-25: This block of rungs forms the core of the barrel washing state machine. It sends commands to the CIP C controller via the `CIPCCDL` register to sequence through the cleaning stages.
-    - Rung 24: At the start (`NOT BR_ST1 AND NOT BR_ST2 AND NOT BR_ST3`), it sends command 1 to start Stage 1.
-    - Rung 22-23: When Stage 1 is complete (`CIP_END` and `BR_ST1`), it sends command 2 or 3 to start Stage 2 (Soda or Acid wash, based on `BR2USES`).
-    - Rung 21: When Stage 2 is complete (`CIP_END` and `BR_ST2`), it sends command 4 to start Stage 3.
-    - Rung 20: When Stage 3 is complete (`CIP_END` and `BR_ST3`), it sets the `BR_END` flag.
-    - Rung 18 & 25: It sends command 7 to end the sequence when a stage is complete (`END_STG`) or the entire process is finished (`BR_END`). *)
+(* Rung 18: Sends the "End" command (7) to the CIP C controller if the current stage timer has elapsed (`END_STG`) but the CIP C controller has not yet confirmed completion (`NOT CIP_END`). *)
 IF BR_WORK AND END_STG AND NOT CIP_END THEN
 	CIPCCDL := 7;
 END_IF;
 
-(* Rung 19: COMMENT5 *)
+(* Rung 19: Not used. *)
 
-(* Rung 20: Barrel end CIP *)
+(* Rung 20: Sets the `BR_END` (Barrel End) flag and notifies other processes (`En_CIP_SEQ`) when the final stage (Stage 3) is complete. It also resets the master `BR_WORK` flag to terminate the sequence. *)
 IF CIP_END AND BR_WORK AND BR_ST3 THEN
 	BR_END := TRUE;
 	En_CIP_SEQ := TRUE;
@@ -142,35 +137,35 @@ IF CIP_END AND BR_WORK AND BR_ST3 AND NOT M00299 THEN
 	BR_WORK := FALSE;
 END_IF;
 
-(* Rung 21: CIP C command (local-no genius) *)
+(* Rung 21: When Stage 2 is complete (`CIP_END` and `BR_ST2`), this rung commands CIP C to start Stage 3 (command 4) and transitions the internal state machine from Stage 2 to Stage 3. *)
 IF CIP_END AND BR_WORK AND BR_ST2 THEN
 	CIPCCDL := 4;
 	BR_ST3 := TRUE;
 	BR_ST2 := FALSE;
 END_IF;
 
-(* Rung 22: CIP C command (local-no genius) *)
+(* Rung 22: When Stage 1 is complete and soda is selected (`BR2USES`), this rung commands CIP C to start the soda wash (command 2) and transitions the state machine from Stage 1 to Stage 2. *)
 IF CIP_END AND BR_WORK AND BR_ST1 AND BR2USES THEN
 	CIPCCDL := 2;
 	BR_ST2 := TRUE;
 	BR_ST1 := FALSE;
 END_IF;
 
-(* Rung 23: CIP C command (local-no genius) *)
+(* Rung 23: When Stage 1 is complete and acid is selected (`NOT BR2USES`), this rung commands CIP C to start the acid wash (command 3) and transitions the state machine from Stage 1 to Stage 2. *)
 IF CIP_END AND BR_WORK AND BR_ST1 AND NOT BR2USES THEN
 	CIPCCDL := 3;
 	BR_ST2 := TRUE;
 	BR_ST1 := FALSE;
 END_IF;
 
-(* Rung 24: CIP C command (local-no genius) *)
+(* Rung 24: At the beginning of the sequence (no stages active), this rung commands CIP C to start Stage 1 (command 1) and sets the internal state machine to Stage 1. *)
 IF CIP_END AND BR_WORK AND NOT BR_ST1 AND NOT BR_ST2 AND NOT BR_ST3 THEN
 	CIPCCDL := 1;
 	BR_ST1 := TRUE;
 	CIP_END := FALSE;
 END_IF;
 
-(* Rung 25: CIP C command (local-no genius) *)
+(* Rung 25: When the entire sequence is finished (`BR_END`), this rung sends the final "End" command (7) to CIP C and resets all internal stage flags. *)
 IF BR_END THEN
 	CIPCCDL := 7;
 	BR_ST1 := FALSE;
@@ -178,7 +173,11 @@ IF BR_END THEN
 	BR_ST3 := FALSE;
 END_IF;
 
-(* Rung 26-28: Copies the internal barrel stage flags (`BR_ST1`, `BR_ST2`, `BR_ST3`) to global memory addresses (`M00061`, `M00062`, `M00063`). This is likely for use by other processes, such as the HMI, to display the current stage of the barrel cleaning sequence. *)
+(* Rung 26: Copies the internal Stage 1 flag (`BR_ST1`) to a global memory address (`M00061`) for external visibility (e.g., HMI). *)
 M00061 := BR_ST1;
+
+(* Rung 27: Copies the internal Stage 2 flag (`BR_ST2`) to a global memory address (`M00062`). *)
 M00062 := BR_ST2;
+
+(* Rung 28: Copies the internal Stage 3 flag (`BR_ST3`) to a global memory address (`M00063`). *)
 M00063 := BR_ST3;

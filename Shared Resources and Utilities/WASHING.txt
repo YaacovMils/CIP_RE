@@ -469,7 +469,14 @@ M00301 := (NOT M00297) AND M00302 AND (R00606 >= 300 AND R00606 <= 600);
 
 (* Rung 47: COMMENT0 *)
 
-(* Rung 48: CIP in operating state. *)
+(* Rungs 48-62: This block implements a "drain all tanks" sequence that runs on startup. It uses a timer to sequentially open the drain valves for each of the five main supply tanks for 10 seconds each.
+    - Rungs 48-50: A timer that runs for 50 seconds.
+    - Rungs 51-52: Opens the Acid Tank drain valve (`XVM054`) for the first 10 seconds.
+    - Rungs 53-54: Opens the Recovery Water Tank drain valve (`XVM053`) for the next 10 seconds.
+    - Rungs 55-56: Opens the Fresh Water Tank drain valve (`XVM052`) for the next 10 seconds.
+    - Rungs 57-58: Opens the Soda Tank 1 drain valve (`XVM055`) for the next 10 seconds.
+    - Rungs 59-60: Opens the Soda Tank 2 drain valve (`XVM056`) for the final 10 seconds.
+    - Rungs 61-62: Resets the timer and the sequence. *)
 IF (#ALW_ON AND NOT STOPALL) AND NOT Rung48_EdgeDetector THEN
     WORKALL := TRUE;
 ELSE

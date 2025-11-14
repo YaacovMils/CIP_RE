@@ -171,15 +171,7 @@ VAR
 END_VAR
 
 
-(* Rung 1 *)
-(*
- * Block Instruction Analysis: MOVE_INT
- * This instruction moves integer data.
- * Source: BRL1_NM (starting at %R09052)
- * Destination: R00083 (starting at %R00083)
- * Length: 3 WORDs
- * Address Range: Reads 3 words from %R09052 to %R09054 and writes to %R00083, %R00084, and %R00085.
-*)
+(* Rung 1: At the beginning of the SIP sequence, this rung captures the barrel numbers from the `PRES_ST` array and stores them in registers `R00083`, `R00084`, and `R00085` for later use in data logging. *)
 IF SIP_Run AND (SIP_Total_Time < 5) THEN
     R00083 := PRES_ST[2];
     R00084 := PRES_ST[3];
@@ -220,28 +212,13 @@ END_IF;
 
 (* Rung 11: SEQ *)
 
-(* Rung 12: CIP_SIP_LOG.INT[19] *)
+(* Rung 12: A 20-second timer that controls the duration of the data logging sequence. *)
 IF EN_SIP_SEQ AND SEC_PLS THEN
     R00089 := R00089 + 1;
 END_IF;
 Rung12_CONT := EN_SIP_SEQ AND (R00089 >= 20);
 
-(* Rung 13 *)
-(*
- * Block Instruction Analysis: BLK_CLR_WORD
- * This instruction clears a block of memory by writing zeros.
- * Destination: SIP_Tank_No (starting at %R00080)
- * Length: 6 WORDs
- * Address Range: Writes 0 to 6 words from %R00080 to %R00085.
- *
- * Block Instruction Analysis: MOVE_REAL
- * Source: Constant value 0.0
- * Destination: SIP_Temperature (%R00060)
- *
- * Block Instruction Analysis: MOVE_INT
- * Source: Constant value 0
- * Destination: R00089 (%R00089)
-*)
+(* Rung 13: Resets all logging variables at the end of the data logging sequence. *)
 IF Rung12_CONT THEN
     SIP_Tank_No := 0;
     SIP_Heat_Time := 0;
@@ -256,17 +233,12 @@ END_IF;
 
 (* Rung 14: SIP END SEQ *)
 
-(* Rung 15: CIP_SIP_LOG.Bits[10] *)
+(* Rung 15: Sets the `SIP_End` flag when the data for any of the barrels is being logged. *)
 SIP_End := EN_SIP_SEQ AND (BRL1_END OR BRL2_END OR BRL3_END);
 
 (* Rung 16: Barrel 1 *)
 
-(* Rung 17: BRL1_END *)
-(*
- * Block Instruction Analysis: MOVE_INT
- * Source: R00083 (%R00083)
- * Destination: SIP_Tank_No (%R00080)
-*)
+(* Rung 17: Logs the data for Barrel 1 between 1 and 4 seconds of the post-CIP sequence. *)
 IF (SIP_CFG_1 OR SIP_CFG_1_2 OR SIP_CFG_1_2_3) AND (R00089 >= 1) AND (R00089 <= 4) THEN
     SIP_Tank_No := R00083;
     SIP_Temperature := Tank1_Temp / 10.0;
@@ -275,12 +247,7 @@ BRL1_END := (SIP_CFG_1 OR SIP_CFG_1_2 OR SIP_CFG_1_2_3) AND (R00089 >= 2) AND (R
 
 (* Rung 18: Barrel 2 *)
 
-(* Rung 19 *)
-(*
- * Block Instruction Analysis: MOVE_INT
- * Source: R00084 (%R00084)
- * Destination: SIP_Tank_No (%R00080)
-*)
+(* Rung 19: Logs the data for Barrel 2 between 7 and 11 seconds of the post-CIP sequence. *)
 IF (SIP_CFG_1_2 OR SIP_CFG_2 OR SIP_CFG_1_2_3) AND (R00089 >= 7) AND (R00089 <= 11) THEN
     SIP_Tank_No := R00084;
     SIP_Temperature := Tank2_Temp / 10.0;
@@ -289,12 +256,7 @@ BRL2_END := ((R00089 >= 8) AND (R00089 <= 11)) AND (SIP_CFG_1_2 OR SIP_CFG_2 OR 
 
 (* Rung 20: Barrel 3 *)
 
-(* Rung 21 *)
-(*
- * Block Instruction Analysis: MOVE_INT
- * Source: R00085 (%R00085)
- * Destination: SIP_Tank_No (%R00080)
-*)
+(* Rung 21: Logs the data for Barrel 3 between 14 and 18 seconds of the post-CIP sequence. *)
 IF (SIP_CFG_3 OR SIP_CFG_1_2_3) AND (R00089 >= 14) AND (R00089 <= 18) THEN
     SIP_Tank_No := R00085;
     SIP_Temperature := Tank3_Temp / 10.0;
@@ -303,7 +265,7 @@ BRL3_END := ((R00089 >= 15) AND (R00089 <= 18)) AND (SIP_CFG_3 OR SIP_CFG_1_2_3)
 
 (* Rung 22: COMMENT9 *)
 
-(* Rung 23: tank steril *)
+(* Rung 23: This is the master start logic for the SIP sequence. It initiates the process when a start command is received and no stop commands are active. *)
 IF ((ST_STRL OR ST2STRL OR ST_SCR OR PB_Start_SIP) AND (CNF_BR1 OR CNF_BR2 OR CNF_BR3) AND (NOT STP_STL) AND (NOT STP_TS) AND (NOT PB_Stop_SIP)) THEN
     XVM042 := TRUE;
     STERIL := TRUE;

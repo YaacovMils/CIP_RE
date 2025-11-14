@@ -66,57 +66,57 @@ VAR
 	TON_9_LST_TMR : TON;
 END_VAR
 
-(* Rung 1: CIP A in alarm state. *)
+(* Rung 1: Triggers a CIP A low-flow alarm if the pump is running but the flow rate is below 1000 for a configurable amount of time. *)
 TON_1_TMRA038(IN := (P4069 AND #ALW_ON AND (R09006[1] < 1000)), PT := INT_TO_TIME(PMPAPRD * 100));
 T00001 := TON_1_TMRA038.Q;
 IF T00001 THEN
 	A_ALARM := TRUE;
 END_IF;
 
-(* Rung 2: Rung 2 *)
+(* Rung 2: Measures the time between flowmeter pulses for the CIP A pump. *)
 TON_2_R00611(IN := (P4069 AND NOT FQCAPLS), PT := INT_TO_TIME(0 * 100));
 IF TON_2_R00611.Q THEN
 	R00614 := WORD_TO_INT(R00611[0]);
 END_IF;
 
-(* Rung 3: Rung 3 *)
+(* Rung 3: Resets the flow rate to 0 when the CIP A pump is not running. *)
 IF #ALW_ON AND NOT P4069 THEN
 	R09006[1] := 0;
 END_IF;
 
-(* Rung 4: Rung 4 *)
+(* Rung 4: Calculates the flow rate based on the time between pulses. *)
 IF #ALW_ON AND FQCAPLS THEN
 	R00615 := 18000 / R00614;
 	R00615 := R00615 * 20;
 	R09006[1] := INT_TO_WORD(R00615);
 END_IF;
 
-(* Rung 5: CIP B in alarm state. *)
+(* Rung 5: Triggers a CIP B low-flow alarm if the pump is running but the flow rate is below 1000 for a configurable amount of time. *)
 TON_5_TMRA039(IN := (P4065 AND #ALW_ON AND (R09006[2] < 1000)), PT := INT_TO_TIME(PMPAPRD * 100));
 T00002 := TON_5_TMRA039.Q;
 IF T00002 THEN
 	B_ALARM := TRUE;
 END_IF;
 
-(* Rung 6: Rung 6 *)
+(* Rung 6: Measures the time between flowmeter pulses for the CIP B pump. *)
 TON_6_R00616(IN := (P4065 AND NOT FQCBPLS), PT := INT_TO_TIME(0 * 100));
 IF TON_6_R00616.Q THEN
 	R00619 := WORD_TO_INT(R00616[0]);
 END_IF;
 
-(* Rung 7: Rung 7 *)
+(* Rung 7: Calculates the flow rate based on the time between pulses. *)
 IF #ALW_ON AND FQCBPLS THEN
 	R00620 := 18000 / R00619;
 	R00620 := R00620 * 20;
 	R09006[2] := INT_TO_WORD(R00620);
 END_IF;
 
-(* Rung 8: Rung 8 *)
+(* Rung 8: Resets the flow rate to 0 when the CIP B pump is not running. *)
 IF #ALW_ON AND NOT P4065 THEN
 	R09006[2] := 0;
 END_IF;
 
-(* Rung 9: CIP C in alarm state. *)
+(* Rung 9: Triggers a CIP C low-flow alarm. This logic is currently disabled. *)
 TON_9_LST_TMR(IN := (P4M66 AND #ALW_OFF AND (FQC1007[0] < 1000)), PT := INT_TO_TIME(PMPAPRD * 100));
 T00003 := TON_9_LST_TMR.Q;
 IF T00003 THEN

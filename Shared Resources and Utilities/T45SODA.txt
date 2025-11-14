@@ -149,7 +149,7 @@ END_VAR
 
 (* Rung 1: COMMENT0 *)
 
-(* Rung 2: Tanks 4,5 stopped HMI *)
+(* Rung 2: Consolidates multiple stop conditions into a single `T45_STP` flag. This is a critical safety feature that halts the soda tanks' operations if a tank-specific alarm (`T45_ALR`), a global stop (`STOPALL`), an HMI stop command (`T45MMIS`), or a global end (`ENDALL`) is active. *)
 T45_STP := T45_ALR OR STOPALL OR T45MMIS OR ENDALL OR M00299;
 
 (* Rung 3 *)
@@ -157,12 +157,15 @@ M00233_R_TRIG(CLK := (M00224 OR M00221) AND NOT A2_STRT AND NOT B2_STRT AND NOT 
 M00233 := M00233_R_TRIG.Q;
 
 
-(* Rung 4-30: This block contains the state machine for the soda tanks, which cycles through filling, circulating, and conditioning states.
-    - Rung 5, 7: Initiates the filling state (`T4_FLNG`, `T5_FLNG`) when the tank level is low.
-    - Rung 29: Initiates the circulation state (`T45CIRC`) after filling is complete or after an idle timer expires.
-    - Rung 16-22: During circulation, checks if the conductivity and temperature are within their setpoints.
+(* Rungs 4-30: This block contains the state machine for the soda tanks, which cycles through filling, circulating, and conditioning states for the active tank.
+    - Rungs 5, 7: Initiates the filling state (`T4_FLNG`, `T5_FLNG`) for the respective tank when its level is low.
+    - Rung 10: An idle timer that triggers the circulation state if the active tank has been idle for 15 minutes.
+    - Rung 12: A timer that ensures the circulation runs for a minimum of 60 seconds.
+    - Rung 14: Enables the conductivity and temperature measurement after the circulation has been running for 30 seconds.
+    - Rungs 16-22: During circulation, checks if the conductivity and temperature are within their setpoints.
+    - Rung 28: A timer that ensures the solution remains in a conditioned state for at least 1 second before stopping the circulation.
+    - Rung 29: Initiates the circulation state (`T45CIRC`) after filling is complete or after the idle timer expires.
     - Rung 30: Stops the circulation when the solution is fully conditioned. *)
-(* T4 Soda Filling *)
 
 (* Rung 5: Soda tank 4 filling water *)
 T4_FLNG := (NOT LOLVL4
@@ -298,7 +301,7 @@ END_IF;
 
 (* Rung 31: COMMENT6 *)
 
-(* Rung 32 *)
+(* Rung 32: Controls the water fill valves for the soda tanks. `WTR2TK4` is a command to fill Tank 4, and `XVM013` is the command to fill Tank 5. The logic ensures that only the active tank is filled, and only when the system is not stopped and no CIP line is using the soda tanks. *)
 _Bit := NOT D_Step21 AND NOT D_Step22 AND NOT D_Step23 AND NOT D_Step24 AND NOT D_Step28 AND NOT D_Step30 AND NOT STOPALL AND NOT ENDALL AND NOT T45_STP;
 WTR2TK4 := _Bit AND T4ACTIV AND T4_FLNG;
 XVM013 := _Bit AND M02050 AND NOT T4ACTIV AND T5_FLNG;
@@ -310,12 +313,11 @@ XVM012 := #ALW_ON AND NOT WTNK_OK AND WTR2TK4;
 _Bit := (#ALW_OFF AND NOT STOPALL AND NOT ENDALL AND NOT T45_STP)
 		AND ((T4ACTIV AND HILVL4 AND XVM055) OR (NOT T4ACTIV AND HILVL5 AND NOT XVM056));
 
-(* Rung 35-40: This block controls the outputs for the circulation and conditioning processes.
-    - Rung 35: Activates the circulation pump (`P4M68`) and valves (`XVM027`, `XVM030`).
-    - Rung 36: Opens the steam valve (`XVM040`) for heating.
-    - Rung 37, 39: Activate the dosing pump (`P4057`) and valves (`XVM018`, `XVM019`) to add concentrated soda.
+(* Rungs 35-40: This block controls the outputs for the circulation and conditioning processes for the active tank.
+    - Rung 35: Activates the circulation pump (`P4M68`) and opens the appropriate circulation valve (`XVM027` or `XVM030`).
+    - Rung 36: Opens the steam valve (`XVM040`) for heating if the temperature is below the setpoint.
+    - Rungs 37, 39: Activate the dosing pump (`P4057`) and open the appropriate dosing valve (`XVM018` or `XVM019`) to add concentrated soda if the conductivity is below the setpoint.
     - Rung 40: Controls the 3-way valve (`XVM060`) for the heating circuit. *)
-(* FROM SODA TANK 1 TO HITING CIRC *)
 _Bit := T45CIRC AND NOT ENDALL AND NOT STOPALL AND NOT T45_STP AND NOT T4ACTIV
 		AND(T4ACTIV AND NOT T4_FLNG)OR ( NOT T4ACTIV AND NOT T5_FLNG);
 _Bit1 := #ALW_ON AND M00301 AND ((LSL3081 AND M02050) OR LSL3067)
@@ -346,7 +348,7 @@ XVM060 := (#ALW_ON AND T4ACTIV AND NOT STOPALL AND NOT ENDALL AND NOT T45_STP AN
 
 (* Rung 41: COMMENT7 *)
 
-(* Rung 42: Sets the `T4_BUSY` and `T5_BUSY` interlocks. A tank is considered busy if it is the inactive tank, or if the active tank is filling, circulating, or stopped. This is a critical safety feature that prevents the CIP lines from drawing soda from a tank that is not ready. *)
+(* Rung 42: Sets the `T4_BUSY` and `T5_BUSY` interlocks. A tank is considered busy if it is the inactive tank, or if the active tank is filling, circulating, or stopped. This is a critical safety feature that prevents the CIP lines from drawing soda from a tank that is not ready. The `B2_STRT` condition is used to allow a CIP to proceed even if the tank is "busy" from a circulation standpoint, as long as the tank is not filling or stopped. *)
 _Bit := (T4ACTIV AND T4_FLNG) OR (NOT T4ACTIV AND T5_FLNG) OR T45CIRC OR T45_STP;
 T4_BUSY := _Bit AND T4ACTIV AND NOT B2_STRT;
 T5_BUSY := _Bit AND NOT T4ACTIV;

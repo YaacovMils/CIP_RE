@@ -67,147 +67,74 @@ END_VAR
 
 (* Rung 1: COMMENT0 *)
 
-(* Rung 2: Temp register 1 *)
-(* Block Instruction Analysis: BLK_CLR_WORD
- * This instruction clears a block of WORDs (16-bit registers) to zero.
- * Length: 4 words
- * Destination: Starts at variable AUX1, memory address %R00102.
- * This will set the memory range %R00102 to %R00105 to zero. *)
+(* Rung 2: Prepares the scaling calculation for CIP A conductivity by clearing the temporary register `AUX1`, moving the raw analog value `AIT1010` into `AUX1[0]`, and setting the scaling factor (200) in `AUX1[2]`. *)
 AUX1[0] := 0;
 AUX1[1] := 0;
 AUX1[2] := 0;
 AUX1[3] := 0;
-(* Block Instruction Analysis: MOVE_INT
- * Source: Variable AIT1010 at memory address %AI0010.
- * Destination: Variable AUX1[0] at memory address %R00102. *)
 AUX1[0] := AIT1010;
-(* Block Instruction Analysis: MOVE_INT
- * Source: Constant value 200.
- * Destination: Variable AUX1[2] at memory address %R00104. *)
 AUX1[2] := 200;
 
-(* Rung 3: Temp register 1 *)
-(* The following operations perform 32-bit (DINT) arithmetic on the memory
- * location starting at AUX1 (%R00102), using a helper variable for clarity. *)
+(* Rung 3: Performs the scaling calculation for CIP A conductivity. The raw value in `AUX1[0]` is multiplied by the scaling factor in `AUX1[2]` (200) and then divided by the maximum raw value (32000). The result is stored back in `AUX1[0]`. *)
 temp_DINT_for_AUX1 := temp_DINT_for_AUX1 * AUX3;
 temp_DINT_for_AUX1 := temp_DINT_for_AUX1 / 32000;
 
-(* Rung 4: Calculated CIP A conductivity *)
-(* Block Instruction Analysis: MOVE_INT
- * Source: Variable AUX1[0] at memory address %R00102.
- * Destination: Variable C_A_CLC at memory address %R00124. *)
+(* Rung 4: Moves the scaled CIP A conductivity value from the temporary register `AUX1[0]` to its final destination `C_A_CLC` for use in the CIP A logic, and also to `R09009` for HMI display. *)
 C_A_CLC := AUX1[0];
-(* Block Instruction Analysis: MOVE_INT
- * Source: Variable C_A_CLC at memory address %R00124.
- * Destination: Variable R09009 at memory address %R09009. *)
 R09009 := C_A_CLC;
 
 (* Rung 5: COMMENT1 *)
 
-(* Rung 6: Temp register 1 *)
-(* Block Instruction Analysis: BLK_CLR_WORD
- * This instruction clears a block of WORDs (16-bit registers) to zero.
- * Length: 4 words
- * Destination: Starts at variable AUX1, memory address %R00102.
- * This will set the memory range %R00102 to %R00105 to zero. *)
+(* Rung 6: Prepares the scaling calculation for CIP B conductivity by clearing the temporary register, moving the raw analog value `AIT1011` into `AUX1[0]`, and setting the scaling factor (200). *)
 AUX1[0] := 0;
 AUX1[1] := 0;
 AUX1[2] := 0;
 AUX1[3] := 0;
-(* Block Instruction Analysis: MOVE_INT
- * Source: Variable AIT1011 at memory address %AI0011.
- * Destination: Variable AUX1[0] at memory address %R00102. *)
 AUX1[0] := AIT1011;
-(* Block Instruction Analysis: MOVE_INT
- * Source: Constant value 200.
- * Destination: Variable AUX1[2] at memory address %R00104. *)
 AUX1[2] := 200;
 
-(* Rung 7: Temp register 1 *)
-(* The following operations perform 32-bit (DINT) arithmetic on the memory
- * location starting at AUX1 (%R00102), using a helper variable for clarity. *)
+(* Rung 7: Performs the scaling calculation for CIP B conductivity. *)
 temp_DINT_for_AUX1 := temp_DINT_for_AUX1 * AUX3;
 temp_DINT_for_AUX1 := temp_DINT_for_AUX1 / 32000;
 
-(* Rung 8: Calculated CIP B conductivity *)
-(* Block Instruction Analysis: MOVE_INT
- * Source: Variable AUX1[0] at memory address %R00102.
- * Destination: Variable C_B_CLC at memory address %R00125. *)
+(* Rung 8: Moves the scaled CIP B conductivity value to `C_B_CLC` and `R09010`. *)
 C_B_CLC := AUX1[0];
-(* Block Instruction Analysis: MOVE_INT
- * Source: Variable C_B_CLC at memory address %R00125.
- * Destination: Variable R09010 at memory address %R09010. *)
 R09010 := C_B_CLC;
 
 (* Rung 9: COMMENT2 *)
 
-(* Rung 10: Temp register 1 *)
-(* Block Instruction Analysis: BLK_CLR_WORD
- * This instruction clears a block of WORDs (16-bit registers) to zero.
- * Length: 4 words
- * Destination: Starts at variable AUX1, memory address %R00102.
- * This will set the memory range %R00102 to %R00105 to zero. *)
+(* Rungs 10-12: Scales the raw analog input for CIP C conductivity (`AIT1012`) into engineering units. This logic is identical to the scaling for CIP A and B. *)
 AUX1[0] := 0;
 AUX1[1] := 0;
 AUX1[2] := 0;
 AUX1[3] := 0;
-(* Block Instruction Analysis: MOVE_INT
- * Source: Variable AIT1012 at memory address %AI0012.
- * Destination: Variable AUX1[0] at memory address %R00102. *)
 AUX1[0] := AIT1012;
-(* Block Instruction Analysis: MOVE_INT
- * Source: Constant value 200.
- * Destination: Variable AUX1[2] at memory address %R00104. *)
 AUX1[2] := 200;
 
-(* Rung 11: Temp register 1 *)
-(* The following operations perform 32-bit (DINT) arithmetic on the memory
- * location starting at AUX1 (%R00102), using a helper variable for clarity. *)
+(* Rung 11: Performs the scaling calculation for CIP C conductivity. *)
 temp_DINT_for_AUX1 := temp_DINT_for_AUX1 * AUX3;
 temp_DINT_for_AUX1 := temp_DINT_for_AUX1 / 32000;
 
-(* Rung 12: Calculated CIP C conductivity *)
-(* Block Instruction Analysis: MOVE_INT
- * Source: Variable AUX1[0] at memory address %R00102.
- * Destination: Variable C_C_CLC at memory address %R00126. *)
+(* Rung 12: Moves the scaled CIP C conductivity value to `C_C_CLC` and `R09011`. *)
 C_C_CLC := AUX1[0];
-(* Block Instruction Analysis: MOVE_INT
- * Source: Variable C_C_CLC at memory address %R00126.
- * Destination: Variable R09011 at memory address %R09011. *)
 R09011 := C_C_CLC;
 
 (* Rung 13: COMMENT3 *)
 
-(* Rung 14: Temp register 1 *)
-(* Block Instruction Analysis: BLK_CLR_WORD
- * This instruction clears a block of WORDs (16-bit registers) to zero.
- * Length: 4 words
- * Destination: Starts at variable AUX1, memory address %R00102.
- * This will set the memory range %R00102 to %R00105 to zero. *)
+(* Rungs 14-16: Scales the raw analog input for the Soda Tank conductivity (`AIT1005`) into engineering units. *)
 AUX1[0] := 0;
 AUX1[1] := 0;
 AUX1[2] := 0;
 AUX1[3] := 0;
-(* Block Instruction Analysis: MOVE_INT
- * Source: Variable AIT1005 at memory address %AI0005.
- * Destination: Variable AUX1[0] at memory address %R00102. *)
 AUX1[0] := AIT1005;
-(* Block Instruction Analysis: MOVE_INT
- * Source: Constant value 1000.
- * Destination: Variable AUX1[2] at memory address %R00104. *)
 AUX1[2] := 1000;
 
-(* Rung 15: Temp register 1 *)
-(* The following operations perform 32-bit (DINT) arithmetic on the memory
- * location starting at AUX1 (%R00102), using a helper variable for clarity. *)
+(* Rung 15: Performs the scaling calculation for the Soda Tank conductivity. *)
 temp_DINT_for_AUX1 := temp_DINT_for_AUX1 * AUX3;
 temp_DINT_for_AUX1 := temp_DINT_for_AUX1 / 32000;
 
-(* Rung 16: Calculated Cond in SODA 1/2 brl *)
+(* Rung 16: Moves the scaled Soda Tank conductivity value to `C_45CLC` and `R09004`. *)
 IF _ALW_ON AND NOT _ALW_OFF THEN
-	(* Block Instruction Analysis: MOVE_INT
-	 * Source: Variable AUX1[0] at memory address %R00102.
-	 * Destination: Variable C_45CLC at memory address %R00119. *)
 	C_45CLC := AUX1[0];
 	R09004 := AIT1005 / 32;
 END_IF;
@@ -229,150 +156,74 @@ IF _ALW_OFF THEN
 	C_3_CLC := TRUNC(R00420);
 END_IF;
 
-(* Rung 21: Temp register 1 *)
-(* Block Instruction Analysis: BLK_CLR_WORD
- * This instruction clears a block of WORDs (16-bit registers) to zero.
- * Length: 4 words
- * Destination: Starts at variable AUX1, memory address %R00102.
- * This will set the memory range %R00102 to %R00105 to zero. *)
+(* Rungs 21-23: Scales the raw analog input for the Acid Tank conductivity (`AIT1006`) into engineering units. *)
 AUX1[0] := 0;
 AUX1[1] := 0;
 AUX1[2] := 0;
 AUX1[3] := 0;
-(* Block Instruction Analysis: MOVE_INT
- * Source: Variable AIT1006 at memory address %AI0006.
- * Destination: Variable AUX1[0] at memory address %R00102. *)
 AUX1[0] := AIT1006;
-(* Block Instruction Analysis: MOVE_INT
- * Source: Constant value 10000.
- * Destination: Variable AUX1[2] at memory address %R00104. *)
 AUX1[2] := 10000;
 
-(* Rung 22: Temp register 1 *)
-(* The following operations perform 32-bit (DINT) arithmetic on the memory
- * location starting at AUX1 (%R00102), using a helper variable for clarity. *)
+(* Rung 22: Performs the scaling calculation for the Acid Tank conductivity. *)
 temp_DINT_for_AUX1 := temp_DINT_for_AUX1 * AUX3;
 temp_DINT_for_AUX1 := temp_DINT_for_AUX1 / 32000;
 
-(* Rung 23: Calculated Cond in ACID brl *)
-(* Block Instruction Analysis: MOVE_INT
- * Source: Variable AUX1[0] at memory address %R00102.
- * Destination: Variable C_3_CLC at memory address %R00120. *)
+(* Rung 23: Moves the scaled Acid Tank conductivity value to `C_3_CLC` and `R09005`. *)
 C_3_CLC := AUX1[0];
-(* Block Instruction Analysis: MOVE_INT
- * Source: Variable C_3_CLC at memory address %R00120.
- * Destination: Variable R09005 at memory address %R09005. *)
 R09005 := C_3_CLC;
 
 (* Rung 24: COMMENT5 *)
 
-(* Rung 25: Temp register 1 *)
-(* Block Instruction Analysis: BLK_CLR_WORD
- * This instruction clears a block of WORDs (16-bit registers) to zero.
- * Length: 4 words
- * Destination: Starts at variable AUX1, memory address %R00102.
- * This will set the memory range %R00102 to %R00105 to zero. *)
+(* Rungs 25-27: Scales the raw analog input for the Acid Tank temperature (`TT1002`) into engineering units. *)
 AUX1[0] := 0;
 AUX1[1] := 0;
 AUX1[2] := 0;
 AUX1[3] := 0;
-(* Block Instruction Analysis: MOVE_INT
- * Source: Variable TT1002 at memory address %AI0002.
- * Destination: Variable AUX1[0] at memory address %R00102. *)
 AUX1[0] := TT1002;
-(* Block Instruction Analysis: MOVE_INT
- * Source: Constant value 100.
- * Destination: Variable AUX1[2] at memory address %R00104. *)
 AUX1[2] := 100;
 
-(* Rung 26: Temp register 1 *)
-(* The following operations perform 32-bit (DINT) arithmetic on the memory
- * location starting at AUX1 (%R00102), using a helper variable for clarity. *)
+(* Rung 26: Performs the scaling calculation for the Acid Tank temperature. *)
 temp_DINT_for_AUX1 := temp_DINT_for_AUX1 * AUX3;
 temp_DINT_for_AUX1 := temp_DINT_for_AUX1 / 32000;
 
-(* Rung 27: Calculated Temp in ACID brl *)
-(* Block Instruction Analysis: MOVE_INT
- * Source: Variable AUX1[0] at memory address %R00102.
- * Destination: Variable T_3_CLC at memory address %R00116. *)
+(* Rung 27: Moves the scaled Acid Tank temperature value to `T_3_CLC` and `R09001`. *)
 T_3_CLC := AUX1[0];
-(* Block Instruction Analysis: MOVE_INT
- * Source: Variable T_3_CLC at memory address %R00116.
- * Destination: Variable R09001 at memory address %R09001. *)
 R09001 := T_3_CLC;
 
 (* Rung 28: AI3 0-200 Soda Temperature *)
 
-(* Rung 29: Temp register 1 *)
-(* Block Instruction Analysis: BLK_CLR_WORD
- * This instruction clears a block of WORDs (16-bit registers) to zero.
- * Length: 4 words
- * Destination: Starts at variable AUX1, memory address %R00102.
- * This will set the memory range %R00102 to %R00105 to zero. *)
+(* Rungs 29-31: Scales the raw analog input for the Soda Tank 1 temperature (`TT1003`) into engineering units. *)
 AUX1[0] := 0;
 AUX1[1] := 0;
 AUX1[2] := 0;
 AUX1[3] := 0;
-(* Block Instruction Analysis: MOVE_INT
- * Source: Variable TT1003 at memory address %AI0003.
- * Destination: Variable AUX1[0] at memory address %R00102. *)
 AUX1[0] := TT1003;
-(* Block Instruction Analysis: MOVE_INT
- * Source: Constant value 200.
- * Destination: Variable AUX1[2] at memory address %R00104. *)
 AUX1[2] := 200;
 
-(* Rung 30: Temp register 1 *)
-(* The following operations perform 32-bit (DINT) arithmetic on the memory
- * location starting at AUX1 (%R00102), using a helper variable for clarity. *)
+(* Rung 30: Performs the scaling calculation for the Soda Tank 1 temperature. *)
 temp_DINT_for_AUX1 := temp_DINT_for_AUX1 * AUX3;
 temp_DINT_for_AUX1 := temp_DINT_for_AUX1 / 32000;
 
-(* Rung 31: Calculated Temp in SODA1 brl *)
-(* Block Instruction Analysis: MOVE_INT
- * Source: Variable AUX1[0] at memory address %R00102.
- * Destination: Variable T_4_CLC at memory address %R00117. *)
+(* Rung 31: Moves the scaled Soda Tank 1 temperature value to `T_4_CLC` and `R09002`. *)
 T_4_CLC := AUX1[0];
-(* Block Instruction Analysis: MOVE_INT
- * Source: Variable T_4_CLC at memory address %R00117.
- * Destination: Variable R09002 at memory address %R09002. *)
 R09002 := T_4_CLC;
 
 (* Rung 32: 28/12/2023 Canceled ************************************Soda Tank 2 ****************** *)
 
-(* Rung 33: Temp register 1 *)
-(* Block Instruction Analysis: BLK_CLR_WORD
- * This instruction clears a block of WORDs (16-bit registers) to zero.
- * Length: 4 words
- * Destination: Starts at variable AUX1, memory address %R00102.
- * This will set the memory range %R00102 to %R00105 to zero. *)
+(* Rungs 33-35: Scales the raw analog input for the Soda Tank 2 temperature (`TT1003`) into engineering units. Note that this block is likely a copy-paste error, as it uses the same input as the Soda Tank 1 temperature calculation. *)
 AUX1[0] := 0;
 AUX1[1] := 0;
 AUX1[2] := 0;
 AUX1[3] := 0;
-(* Block Instruction Analysis: MOVE_INT
- * Source: Variable TT1003 at memory address %AI0003.
- * Destination: Variable AUX1[0] at memory address %R00102. *)
 AUX1[0] := TT1003;
-(* Block Instruction Analysis: MOVE_INT
- * Source: Constant value 200.
- * Destination: Variable AUX1[2] at memory address %R00104. *)
 AUX1[2] := 200;
 
-(* Rung 34: Temp register 1 *)
-(* The following operations perform 32-bit (DINT) arithmetic on the memory
- * location starting at AUX1 (%R00102), using a helper variable for clarity. *)
+(* Rung 34: Performs the scaling calculation for the Soda Tank 2 temperature. Note the different divisor (31950 instead of 32000), which may be an attempt to calibrate the sensor. *)
 temp_DINT_for_AUX1 := temp_DINT_for_AUX1 * AUX3;
 temp_DINT_for_AUX1 := temp_DINT_for_AUX1 / 31950;
 
-(* Rung 35: Calculated Temp in SODA2 brl *)
-(* Block Instruction Analysis: MOVE_INT
- * Source: Variable AUX1[0] at memory address %R00102.
- * Destination: Variable T_5_CLC at memory address %R00118. *)
+(* Rung 35: Moves the scaled Soda Tank 2 temperature value to `T_5_CLC` and `R09003`. *)
 T_5_CLC := AUX1[0];
-(* Block Instruction Analysis: MOVE_INT
- * Source: Variable T_5_CLC at memory address %R00118.
- * Destination: Variable R09003 at memory address %R09003. *)
 R09003 := T_5_CLC;
 
 (* Rung 36: A flow meter *)
@@ -386,10 +237,7 @@ IF _ALW_OFF THEN
 	A_FLOW[2] := FQC1007[2];
 END_IF;
 
-(* Rung 37: A flow meter *)
-(* Block Instruction Analysis: MOVE_INT
- * Source: Variable FQC1007[0] at memory address %AI0007.
- * Destination: Variable A_FLOW[0] at memory address %R09006. *)
+(* Rung 37: This logic appears to be a placeholder for scaling the flow meter input, but the multiplication and division by 1 have no effect. The logic is not currently active. *)
 A_FLOW[0] := FQC1007[0];
 A_FLOW[0] := A_FLOW[0] / 1;
 A_FLOW[0] := A_FLOW[0] * 1;

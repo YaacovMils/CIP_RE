@@ -66,7 +66,7 @@ END_VAR
 (* Rung 1 - Analog to Engineering unit *)
 ANG2ENG();
 
-(* Rung 2 - DI from add-on to MMI *)
+(* Rung 2: Packs the status of various digital inputs (valve open/closed feedback) into a single word for HMI display. *)
 DI_add_2MMI.X0 := XVO3001;
 DI_add_2MMI.X1 := XVC3002;
 DI_add_2MMI.X2 := XVO3003;
@@ -76,7 +76,7 @@ DI_add_2MMI.X5 := XVC3006;
 DI_add_2MMI.X6 := XVO3007;
 
 
-(* Rung 3 - DQ to add-on from MMI *)
+(* Rung 3: Packs the status of various digital outputs (valve commands) into a single word for HMI display. *)
 DO_add_2MMI.X0 := XV4001;
 DO_add_2MMI.X1 := XV4002;
 DO_add_2MMI.X2 := XV4003;
@@ -85,8 +85,7 @@ DO_add_2MMI.X4 := XV4005;
 DO_add_2MMI.X5 := XV4006;
 
 
-(* Rung 4 - Level alarms to MMI *)
-(* Mapping individual bits to LVL_ALM register *)
+(* Rung 4: Packs various level alarms and tank status bits into a single word for HMI display. This allows the operator to see the status of all tanks at a glance. *)
 LVL_ALM.X0 := LOLVL4;
 LVL_ALM.X1 := HILVL5;
 LVL_ALM.X2 := HILVL1;

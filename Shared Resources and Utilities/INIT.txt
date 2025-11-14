@@ -23,7 +23,9 @@ VAR_GLOBAL
 	VLVAPRD AT %R00003 : INT; (* Valve alarm time period. *)
 END_VAR
 
-(* Rung 1: Pump alarm time period. *)
+(* Rung 1: Sets the default time delays for device fault monitoring. These values are used by the alarm logic to determine how long to wait for a device to respond before triggering an alarm.
+    - `PMPAPRD` (Pump Alarm Period): 300 (likely 30.0 seconds).
+    - `VLVAPRD` (Valve Alarm Period): 100 (likely 10.0 seconds). *)
 PMPAPRD := 300;
 VLVAPRD := 100;
 

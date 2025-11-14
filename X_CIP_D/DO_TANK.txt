@@ -23,19 +23,19 @@ The execution sequence is:
 *)
 PROGRAM DO_TNK
 
-(* Rung 1 *)
+(* Rung 1: Calls the level delay logic program. *)
 LVL_DLY();
 
-(* Rung 2 *)
+(* Rung 2: Calls the water tank 1 logic program. *)
 T1_WTR();
 
-(* Rung 3 *)
+(* Rung 3: Calls the recovery water tank 2 logic program. *)
 T2_RWTR();
 
-(* Rung 4 *)
+(* Rung 4: Calls the acid tank 3 logic program. *)
 T3_ACID();
 
-(* Rung 5 *)
+(* Rung 5: Calls the soda tanks 4 and 5 logic program. *)
 T45SODA();
 
 END_PROGRAM

@@ -53,7 +53,7 @@ VAR_GLOBAL
 	MMICMD AT %R00536[62] : INT;
 END_VAR
 
-(* Rung 1 *)
+(* Rung 1: Copies the raw data block from the HMI (`R08036`) to the internal PLC data block (`R00536`). This is done only when a new command is present (`R08036[5] <> 0`), which prevents the PLC from processing the same command multiple times. *)
 IF (NOT #ALW_OFF) AND #ALW_ON AND (R08036[5] <> 0) THEN
 	R00536[0] := R08036[0];
 	R00537[1] := R08037[1];
@@ -123,61 +123,61 @@ END_IF;
 
 (* Rung 2: COMMENT0 *)
 
-(* Rung 3: HMI CMD EQ 555 *)
+(* Rung 3: Detects the "555" command from the HMI. *)
 M00206 := #ALW_ON AND #ALW_ON AND (R00536[5] = 555);
 
 (* Rung 4: COMMENT1 *)
 
-(* Rung 5: HMI CMD EQ 777 *)
+(* Rung 5: Detects the "777" command from the HMI. *)
 M00207 := #ALW_ON AND (NOT M00299) AND (R00536[5] = 777);
 
-(* Rung 6: Barrel CIP uses soda on stage 2. *)
+(* Rung 6: Sets the `BR2USES` flag to TRUE when the "777" command is received. *)
 IF (#ALW_OFF AND (NOT M00206)) OR (#ALW_ON AND M00207) THEN
     BR2USES := TRUE;
 END_IF;
 
-(* Rung 7: Barrel CIP uses soda on stage 2. *)
+(* Rung 7: Resets the `BR2USES` flag to FALSE when the "555" command is received. *)
 IF (M00299 AND (NOT M00207)) OR (#ALW_ON AND M00206) AND NOT M00207 THEN
     BR2USES := FALSE;
 END_IF;
 
-(* Rung 8 *)
+(* Rung 8: Sets `R00610` to 20 when the "777" command is received. *)
 IF #ALW_ON AND M00207 THEN
     R00610 := 20;
 END_IF;
 
-(* Rung 9 *)
+(* Rung 9: Sets `R00610` to 6 when the "555" command is received. *)
 IF #ALW_ON AND M00206 THEN
     R00610 := 6;
 END_IF;
 
-(* Rung 10: New MMI Command *)
+(* Rung 10: Detects a new command from the HMI. It compares the current command (`MMICMD`) with the command from the previous scan (`L_MMICD`). If they are different, it sets the `NEW_CMD` flag for one scan. This creates a momentary pulse that is used to trigger the command handlers. *)
 NEW_CMD := (MMICMD <> L_MMICD);
 IF NEW_CMD THEN
     L_MMICD := MMICMD;
 END_IF;
 
-(* Rung 11: Call CMD0HND if new command is in range [1000..4000] *)
+(* Rung 11: Calls the `CMD0HND` subroutine if the new command is a manual control command (in the range 1000-4000). *)
 IF NEW_CMD AND (MMICMD >= 1000 AND MMICMD <= 4000) THEN
     CMD0HND();
 END_IF;
 
-(* Rung 12: Call MMIXCMD for new command *)
+(* Rung 12: Calls the `MMIXCMD` subroutine to handle general HMI commands. *)
 IF NEW_CMD THEN
     MMIXCMD();
 END_IF;
 
-(* Rung 13: Call MMIACMD for new command *)
+(* Rung 13: Calls the `MMIACMD` subroutine to handle commands specific to CIP A. *)
 IF NEW_CMD THEN
     MMIACMD();
 END_IF;
 
-(* Rung 14: Call MMIBCMD for new command *)
+(* Rung 14: Calls the `MMIBCMD` subroutine to handle commands specific to CIP B. *)
 IF NEW_CMD THEN
     MMIBCMD();
 END_IF;
 
-(* Rung 15: Call MMICCMD for new command *)
+(* Rung 15: Calls the `MMICCMD` subroutine to handle commands specific to CIP C. *)
 IF NEW_CMD THEN
     MMICCMD();
 END_IF;

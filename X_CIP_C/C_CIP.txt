@@ -119,7 +119,7 @@ VAR_GLOBAL
 	_Bit AT %T00002 : BOOL; (* temporary bit *)
 END_VAR
 
-(* Rung 1 *)
+(* Rung 1: Checks if the returning acid solution's conductivity is within the acceptable range. *)
 IF C2_STRT AND NOT C2USE_S AND NOT C_STOP AND NOT C_END THEN
   AUX1[0] := COND_3 - 0;
   ACID_OK := (C_C_CLC >= AUX1[0]);
@@ -127,7 +127,7 @@ ELSE
   ACID_OK := FALSE;
 END_IF;
 
-(* Rung 2 *)
+(* Rung 2: Checks if the returning soda solution's conductivity is within the acceptable range. *)
 IF C2_STRT AND C2USE_S AND NOT C_STOP AND NOT C_END THEN
   AUX1[0] := COND_45 - 0;
   SODA_OK := (C_C_CLC >= AUX1[0]);
@@ -136,36 +136,36 @@ ELSE
 END_IF;
 
 
-(* Rung 3 *)
+(* Rung 3: Checks if the returning water is clean enough to be considered a final rinse. *)
 WATR_OK := C3_STRT AND NOT C_STOP AND NOT C_END AND (C_C_CLC < 5);
 
-(* Rung 4: Initiates the reactor filling process (`C_FILLS`). This is triggered by the start of any CIP stage (`C1_STRT`, `C2_STRT`, `C3_STRT`) from `C_CMD.txt`, or by the return fluid being within conductivity specs (`SODA_OK`, `ACID_OK`, `WATR_OK`). The process continues until the reactor is full (`C_FULL`). *)
+(* Rung 4: Latches the reactor filling process (`C_FILLS`). *)
 IF (C1_STRT OR SODA_OK OR ACID_OK OR WATR_OK) AND (NOT C_STOP AND NOT C_END AND NOT C_FULL) THEN
 	C_FILLS := TRUE;
 END_IF;
 
-(* Rung 5 *)
+(* Rung 5: Sets the target fill volume for Stage 1. *)
 IF #ALW_ON AND C1_STRT THEN
 	R00455 := 60;
 END_IF;
 
-(* Rung 6 *)
+(* Rung 6: Sets the target fill volume for Stage 2. *)
 IF C2_STRT THEN
 	R00455 := 300;
 END_IF;
 
-(* Rung 7 *)
+(* Rung 7: Sets the target fill volume for Stage 3. *)
 IF C3_STRT AND #ALW_ON THEN
 	R00455 := 180;
 END_IF;
 
-(* Rung 8: Can fill reactor *)
+(* Rung 8: Determines if a fill is permissible by checking for resource availability. *)
 CANFILL := ((C1_STRT AND NOT T1_BUSY)
 		  OR(C2_STRT AND (C2USE_S AND #ALW_ON AND T4ACTIV) OR (NOT C2USE_S AND NOT T3_BUSY))
 		  OR(C3_STRT AND NOT T1_BUSY)
 		  AND NOT C_STOP AND NOT C_END);
 
-(* Rung 9 *)
+(* Rung 9: Increments the totalized flow from the flowmeter (`FQCCQTY`) and de-latches the `C_FILLS` flag when the target volume is reached. *)
 _Bit:=FALSE;
 IF M00222 AND CANFILL AND C_FILLS THEN
 	FQCCQTY := FQCCQTY + 1;
@@ -175,7 +175,7 @@ IF M00222 AND CANFILL AND C_FILLS THEN
 	END_IF;
 END_IF;
 
-(* Rung 10 *)
+(* Rung 10: Latches the `C_FULL` flag when the target volume is reached or if the temporary tank is full. *)
 IF _Bit OR (#ALW_ON AND LSH3072) THEN
 	C_FULL := TRUE;
 END_IF;
@@ -185,22 +185,20 @@ END_IF;
 (* Rung 12 *)
 XVM059 := #ALW_OFF AND (CIPCCDL >= 1 AND CIPCCDL <= 7);
 
-(* Rung 13-14: This block controls the supply valves for the CIP C line.
-    - Rung 13: Opens the fresh water valve (`XVM045`) during Stage 1 (pre-rinse) and Stage 3 (final rinse).
-    - Rung 14: Opens the appropriate chemical valve (`XVM046` for soda, `XVM051` for acid) during Stage 2, based on the `C2USE_S` flag. *)
+(* Rung 13: Opens the fresh water supply valve (`XVM045`) during Stage 1 and Stage 3. *)
 XVM045 := M00300 OR ((CANFILL AND C_FILLS) AND (C1_STRT OR C3_STRT));
 
-(* Rung 14 *)
+(* Rung 14: Controls the chemical supply valves for the Stage 2 wash, selecting the appropriate chemical based on the `C2USE_S` flag. *)
 _Bit:= (CANFILL AND C_FILLS AND C2_STRT) OR (#ALW_ON AND M00301);
 XVM046 := _Bit AND C2USE_S AND NOT M00301 AND LSL3067;
 XVM051 := _Bit AND (NOT C2USE_S  OR M00301) AND LSL3078;
 
-(* Rung 15 *)
+(* Rung 15: Opens the main CIP C supply valve (`XVM049`). *)
 XVM049 := _Bit:= ((CANFILL AND C_FILLS) AND (C1_STRT OR C2_STRT OR C3_STRT)
 				  OR (M00300 AND LSL3071)
 				  OR (M00301 AND LSL3078));
 
-(* Rung 16 *)
+(* Rung 16: Starts the CIP C supply pump (`P4M66`) after a 5-second delay. *)
 R00443(IN := _Bit, PT := T#5S);
 P4M66 := R00443.Q;
 
@@ -210,22 +208,20 @@ M00083 := (XVM046 OR XVM051) AND #ALW_ON AND (R00443[0] >= 10);
 (* Rung 18 *)
 M00306 := #ALW_ON AND C_FULL AND (R09011 >= R00610);
 
-(* Rung 19-20: This block controls the return-side valves for the CIP C line.
-    - Rung 19: Opens the waste valve (`XVM017`) if the return tanks are full (indicated by `LSH*` signals) or during the pre-rinse stage.
-    - Rung 20: Opens the appropriate return valve based on the current stage: `XVM016` for recovery water (Stage 3), `XVM015` for soda (Stage 2), and `XVM050` for acid (Stage 2). *)
+(* Rung 19: Controls the waste valve (`XVM017`), which is opened during the pre-rinse, or if any of the return tanks are full. *)
 XVM017 := ((CANFILL AND NOT #ALW_OFF) OR (#ALW_ON AND C_FULL)
 			AND ((C1_STRT AND LSH3074)
 			 OR (C3_STRT AND LSH3074)
 			 OR ((C2_STRT AND ((LSH3079 AND C2USE_S)
 								OR (LSH3076 AND NOT C2USE_S)));
 
-(* Rung 20 *)
+(* Rung 20: Controls the return valves to the chemical and recovery water tanks. *)
 _Bit:= C_FULL AND NOT C_STOP AND NOT C_END;
 XVM016 := _Bit AND C3_STRT AND NOT LSH3074);
 XVM015 := _Bit AND C2_STRT AND C2USE_S AND NOT LSH3079;
 XVM050 := _Bit AND C2_STRT AND NOT C2USE_S AND NOT LSH3076;
 
-(* Rung 21: Resets all stage and status flags for the CIP C line when the `C_END` signal is received from the command logic in `C_CMD.txt`. This ensures the system is in a clean state before the next CIP sequence begins. *)
+(* Rung 21: Resets all stage and status flags for the CIP C line when the `C_END` signal is received. *)
 IF C_END THEN
 	C_FILLS := TRUE;
 	C_FULL := FALSE;
