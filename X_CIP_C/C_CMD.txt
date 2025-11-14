@@ -57,24 +57,20 @@ END_VAR
 
 (* Rung 1: COMMENT0 *)
 
-(* Rung 2: Command start stage 1 *)
+(* Rungs 2-6: Decodes the `CIPCCDL` integer into individual boolean command flags. *)
 CMD_S1 := (CIPCCDL = 1);
 
-(* Rung 3: Command Start stage 2 with SODA *)
 CMD_S2S := (CIPCCDL = 2);
 
-(* Rung 4: Command Start stage 2 with acid *)
 CMD_S2A := (CIPCCDL = 3);
 
-(* Rung 5: Command Start stage 3 *)
 CMD_S3 := (CIPCCDL = 4);
 
-(* Rung 6: Command End CIP C and/or stage 3 *)
 CMD_END := (CIPCCDL = 7);
 
 (* Rung 7: COMMENT1 *)
 
-(* Rung 8: FQC C quantity (+genius send) *)
+(* Rung 8: Resets the flow counter and the `C_END` flag at the beginning of a new stage. *)
 IF (CMD_S3 OR CMD_S2S OR CMD_S2A OR CMD_S1)
 	AND (NOT C3_STRT AND NOT C2_STRT AND NOT C1_STRT AND NOT C_STOP)  THEN
 	FQCCQTY := 0;
@@ -87,14 +83,14 @@ END_IF;
     - Rung 14: Starts Stage 3 (`C3_STRT`) when `CMD_S3` is received. *)
 (* COMMENT2 *)
 
-(* Rung 10: CIP C stage 1 started *)
+(* Rung 10: Starts Stage 1 of the CIP C sequence. *)
 IF CMD_S1 AND NOT C1_STRT AND NOT C2_STRT AND NOT C3_STRT AND NOT C_STOP THEN
 	C1_STRT := TRUE;
 END_IF;
 
 (* Rung 11: COMMENT3 *)
 
-(* Rung 12: CIP C stage 2 started *)
+(* Rung 12: Starts Stage 2 of the CIP C sequence and sets the `C2USE_S` flag to select between soda and acid. *)
 IF (CMD_S2S OR CMD_S2A) AND NOT C1_STRT AND NOT C2_STRT AND NOT C3_STRT AND NOT C_STOP THEN
 	C2_STRT := TRUE;
 	IF CMD_S2S THEN C2USE_S := TRUE;END_IF;
@@ -103,14 +99,14 @@ END_IF;
 
 (* Rung 13: COMMENT4 *)
 
-(* Rung 14: CIP C Stage 3 started *)
+(* Rung 14: Starts Stage 3 of the CIP C sequence. *)
 IF CMD_S3 AND NOT C3_STRT AND NOT C2_STRT AND NOT C1_STRT AND NOT C_STOP THEN
 	C3_STRT := TRUE;
 END_IF;
 
 (* Rung 15: COMMENT5 *)
 
-(* Rung 16: Consolidates multiple stop conditions into a single `C_STOP` flag. This is a critical safety feature that halts the CIP C sequence if a global stop (`STOPALL`), a CIP C alarm (`C_ALARM`), or an HMI stop command (`CMMISTP`) is active. *)
+(* Rung 16: Consolidates multiple stop conditions into a single `C_STOP` flag. *)
 C_STOP :=  NOT M00287 OR )(STOPALL OR C_ALARM OR CMMISTP OR M00285) AND NOT C_END);
 
 (* Rung 17 *)
@@ -118,7 +114,7 @@ IF #ALW_OFF AND NOT C_STOP THEN
 	R09062 := 0;
 END_IF;
 
-(* Rung 18: CIP C ended *)
+(* Rung 18: Sets the `C_END` flag to terminate the CIP C sequence. *)
 IF CMD_END OR ENDALL THEN
 	C_END := TRUE;
 END_IF;

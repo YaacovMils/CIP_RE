@@ -76,18 +76,14 @@ END_VAR
 
 (* Rung 1: COMMENT0 *)
 
-(* Rung 2: Decodes the incoming `CIPBCMD`. This command is a composite integer where the upper 8 bits represent the reactor number and the lower 8 bits represent the command code. This rung extracts the reactor number and the command code using bitwise AND operations, allowing the rest of the program to use them as separate values. *)
-(* This logic checks if the command word contains extended information.
- If the value is greater than 255, it assumes the high byte is the
- reactor number and the low byte is the actual command. *)
+(* Rung 2: Decodes the incoming `CIPBCMD` from the HMI. This command is a composite integer where the upper 8 bits (AND 65280, or 0xFF00) represent the reactor number and the lower 8 bits (AND 255, or 0x00FF) represent the command code. This rung extracts the reactor number into `B_REAC_num_` and the command code back into `CIPBCMD`, allowing the rest of the program to use them as separate values. *)
 IF CIPBCMD > 255 THEN
 	B_REAC_num_ := CIPBCMD AND 65280;
 	CIPBCMD := CIPBCMD AND 255;
 END_IF;
 
 
-(* Rung 3: COMMENT1 *)
-
+(* Rungs 4-8: Decodes the `CIPBCMD` integer into individual boolean command flags (`CMD_S1`, `CMD_S2S`, `CMD_S2A`, `CMD_S3`, `CMD_END`). These flags are used in the subsequent logic to trigger the corresponding CIP stage. This approach simplifies the state machine logic by converting the numerical command into a set of named booleans. *)
 (* Rung 4: Command start stage 1 *)
 CMD_S1 := (CIPBCMD = 1);
 
@@ -146,11 +142,7 @@ IF #ALW_ON AND CMD_END THEN
 	R00436 := 0;
 END_IF;
 
-(* Rung 17-22: This block forms the core of the CIP B state machine. It processes the decoded commands to start the appropriate cleaning stage, ensuring that only one stage is active at a time.
-    - Rung 18: Starts Stage 1 (`B1_STRT`) when `CMD_S1` is received.
-    - Rung 20: Starts Stage 2 (`B2_STRT`) when `CMD_S2S` (soda) or `CMD_S2A` (acid) is received, and sets the `B2USE_S` flag accordingly.
-    - Rung 22: Starts Stage 3 (`B3_STRT`) when `CMD_S3` is received. *)
-(* COMMENT3 *)
+(* Rungs 18-22: This block forms the core of the CIP B state machine. It processes the decoded command flags to start the appropriate cleaning stage, ensuring that only one stage is active at a time. Each stage is initiated only if no other stage is currently active and the system is not in a `B_STOP` state. This prevents conflicting operations and ensures a safe and orderly CIP sequence. *)
 
 (* Rung 18: CIP B stage 1 started *)
 IF (CMD_S1 AND (NOT B1_STRT) AND (NOT B2_STRT) AND (NOT B3_STRT) AND (NOT B_STOP)) THEN
@@ -179,7 +171,7 @@ END_IF;
 
 (* Rung 23: COMMENT6 *)
 
-(* Rung 24: Consolidates multiple stop conditions into a single `B_STOP` flag. This is a critical safety feature that halts the CIP B sequence if a global stop (`STOPALL`), a CIP B alarm (`B_ALARM`), or an HMI stop command (`BMMISTP`) is active. *)
+(* Rung 24: Consolidates multiple stop conditions into a single `B_STOP` flag. This is a critical safety feature that halts the CIP B sequence if a global stop (`STOPALL`), a CIP B alarm (`B_ALARM`), or an HMI stop command (`BMMISTP`) is active. When a stop occurs, it also sets the status code `R09061` to 555, which is likely used by the HMI to display a "stopped" status to the operator. *)
 B_STOP := (BMMISTP OR STOPALL OR B_ALARM OR M00299) AND (NOT B_END);
 IF B_STOP THEN
 	R09061 := 555;
@@ -191,7 +183,7 @@ IF #ALW_ON AND (NOT B_STOP) THEN
 END_IF;
 
 
-(* Rung 26: CIP B ended *)
+(* Rung 26: Sets the `B_END` flag, which signals the completion of the CIP B sequence. This is triggered by either a specific `CMD_END` command (7) from the HMI or a global `ENDALL` command. The `B_END` flag is used by `B_CIP.txt` to reset its internal state and prepare for the next sequence. *)
 IF CMD_END OR ENDALL THEN
 	B_END := TRUE;
 END_IF;

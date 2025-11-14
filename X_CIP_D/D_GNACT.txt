@@ -97,147 +97,108 @@ VAR
 	R09355 : TON;
 END_VAR
 
-(* Rung 1-15: This block controls the return-side valves, routing the fluid to the correct destination based on the current step of the state machine and the selected CIP type.
-    - Rung 2: Opens the recovery water return valve (`XV4108_Cmd`).
-    - Rung 7: Opens the acid return valve (`XV4106_Cmd`).
-    - Rung 10, 13: Open the soda return valves (`XV4102_Cmd`, `XV4104_Cmd`).
-    - Rung 15: Opens the drain valve (`XV4111_Cmd`). *)
-(* COMMENT0 *)
+(* Rung 1: Not used. *)
 
-(* Rung 2 *)
-(* CIP_D Return To Water Recovery Tank *)
+(* Rung 2: Activates the return valve to the Water Recovery Tank (T2) during specific acid and final rinse steps. The valve is disabled if the tank's high-level switch is active. *)
 XV4108_Cmd := ((D_Step61 OR D_Step62 OR D_Step88 OR D_Step100 OR D_Step90
 				OR(D_Step82 OR D_Step83 OR D_Step84 AND CIP_Rinsing)))AND NOT LSH3074_ON)
 
 
-(* Rung 3 *)
-(* T2 High Level *)
+(* Rungs 3-5: This logic creates a debounced latch for the Recovery Tank's high-level switch (`LSH3074`).
+    - Rung 3: An ON-delay timer (`R09352`) that triggers after the level switch has been active for 5 seconds.
+    - Rung 4: A latch (`LSH3074_ON`) that is set by the timer and remains set until reset by the OFF-delay logic.
+    - Rung 5: An OFF-delay timer (`R09355`) and reset (`LSH3074_OFF`) that unlatches the high-level signal after the switch has been inactive for 5 seconds. This prevents valve chatter from splashing in the tank. *)
 R09352(EN := LSH3074, PV := T#5S);
 
-(* Rung 4 *)
-(* T2 High Level *)
 LSH3074_ON := R09352.Q OR (LSH3074_ON AND NOT LSH3074_OFF);
 
-(* Rung 5 *)
-(* T2 High Level *)
 R09355(EN := NOT LSH3074, PV := T#5S);
 LSH3074_OFF := R09355.Q
 
-(* Rung 6 *)
-(* COMMENT1 *)
+(* Rung 6: Not used. *)
 
-(* Rung 7 *)
-(* CIP_D Return To Acid Tank *)
+(* Rung 7: Activates the return valve to the Acid Tank during the acid wash and final rinse steps (if Acid or All cycles are selected). *)
 XV4106_Cmd := D_Step68 OR D_Step69 OR D_Step63 OR D_Step64
 			  OR((D_Step81 OR D_Step82 OR D_Step83 OR D_Step84)AND(CIP_Acid OR CIP_All);
 
-(* Rung 8 *)
-(* COMMENT2 *)
+(* Rung 8: Not used. *)
 
-(* Rung 9 *)
-(* CIP_D Return To Soda1 Tank *)
+(* Rung 9: Checks for a specific condition in step 30 related to the external cooker's state. *)
 _Bit := D_Step30 AND (Rx_R20_Steper = 7);
 
-(* Rung 10 *)
-(* CIP_D Return To Soda1 Tank *)
+(* Rung 10: Activates the return valve to the Soda 1 Tank during the soda wash, intermediate rinse, and final rinse steps (if Soda cycle is selected). *)
 XV4102_Cmd := ((_Bit OR D_Step28 OR D_Step29 OR D_Step42 OR D_Step43 OR D_Step44)
 			  OR (D_Step81 OR D_Step82 OR D_Step83 OR D_Step84)AND CIP_Soda);
 
-(* Rung 11 *)
-(* COMMENT3 *)
+(* Rung 11: Not used. *)
 
-(* Rung 12 *)
-(* CIP_D Return To Soda2 Tank *)
+(* Rung 12: Repeats the same check as Rung 9 for the Soda 2 Tank logic. *)
 _Bit := D_Step30 AND (Rx_R20_Steper = 7);
 IF D_Step30 THEN
 
 
-(* Rung 13 *)
-(* CIP_D Return To Soda2 Tank *)
+(* Rung 13: Activates the return valve to the Soda 2 Tank, mirroring the logic for the Soda 1 Tank. *)
 XV4104_Cmd := ((_Bit OR D_Step28 OR D_Step29 OR D_Step42 OR D_Step43 OR D_Step44)
 			  OR (D_Step81 OR D_Step82 OR D_Step83 OR D_Step84)AND CIP_Soda);
 
-(* Rung 14 *)
-(* COMMENT4 *)
+(* Rung 14: Not used. *)
 
-(* Rung 15 *)
-(* CIP_D Return To Drain *)
+(* Rung 15: Activates the main return-to-drain valve during pre-rinse, final rinse, and various drain steps. It also diverts the return to drain if the Recovery Tank is full. *)
 XV4111_Cmd := (D_Step1 OR D_Step2 OR D_Step3 OR D_Step4 OR D_Step8 OR D_Step9 OR D_Step21
 				OR D_Step22 OR D_Step23 OR D_Step24 OR D_Step48 OR D_Step49 OR D_Step88 OR D_Step100 OR D_Step90)
 				OR ((D_Step61 OR D_Step62 OR D_Step63 OR D_Step64 AND LSH3074_ON))
 				OR ((D_Step82 OR D_Step83 OR D_Step84)AND CIP_Rinsing );
 
 
-(* Rung 16-27: This block controls the supply-side valves for the CIP D line, selecting the correct fluid source based on the current step of the state machine.
-    - Rung 17: Opens the recovery water valve (`XV4125_Cmd`).
-    - Rung 19: Opens the acid valve (`XV4136_Cmd`).
-    - Rung 22, 25: Open the soda valves (`XV4134_Cmd`, `XV4128_Cmd`).
-    - Rung 27: Opens the fresh water valve (`XV4131_Cmd`). *)
-(* COMMENT5 *)
+(* Rung 16: Not used. *)
 
-(* Rung 17 *)
-(* CIP_D From Water Recovery Tank *)
+(* Rung 17: Activates the supply valve from the Water Recovery Tank during pre-rinse and intermediate rinse steps. This valve is interlocked with the `T2_BUSY` flag. *)
 XV4125_Cmd := (D_Step1 OR D_Step3 OR D_Step4 OR D_Step8 OR D_Step9 OR D_Step41
 			   OR D_Step44 OR D_Step43 OR D_Step48 OR D_Step49) AND NOT T2_BUSY;
 
-(* Rung 18 *)
-(* COMMENT6 *)
+(* Rung 18: Not used. *)
 
-(* Rung 19 *)
-(* CIP_D From Acid Tank *)
+(* Rung 19: Activates the supply valve from the Acid Tank during the acid wash steps. *)
 XV4136_Cmd := D_Step61 OR D_Step63 OR D_Step64 OR D_Step68 OR D_Step69;
 
-(* Rung 20 *)
-(* COMMENT7 *)
+(* Rung 20: Not used. *)
 
-(* Rung 21 *)
-(* CIP_D From Soda1 Tank *)
+(* Rung 21: Checks for a specific condition in step 30 related to the external cooker's state for the Soda 1 supply. *)
 _Bit := D_Step30 AND (Rx_R20_Steper = 4);
 
-(* Rung 22 *)
-(* CIP_D From Soda1 Tank *)
+(* Rung 22: Activates the supply valve from the Soda 1 Tank during the soda wash steps. *)
 XV4134_Cmd := _Bit OR D_Step21 OR D_Step23 OR D_Step24 OR D_Step28 OR D_Step29;
 
-(* Rung 23 *)
-(* COMMENT8 *)
+(* Rung 23: Not used. *)
 
-(* Rung 24 *)
-(* CIP_D From Soda2 Tank *)
+(* Rung 24: Repeats the same check as Rung 21 for the Soda 2 supply. *)
 _Bit := D_Step30 AND (Rx_R20_Steper = 4);
 
-(* Rung 25 *)
-(* CIP_D From Soda2 Tank *)
+(* Rung 25: Activates the supply valve from the Soda 2 Tank during the soda wash steps. *)
 XV4128_Cmd := _Bit OR D_Step23 OR D_Step24 OR D_Step28 OR D_Step29;
 
-(* Rung 26 *)
-(* COMMENT9 *)
+(* Rung 26: Not used. *)
 
-(* Rung 27 *)
-(* CIP_D Fresh Water *)
+(* Rung 27: Activates the Fresh Water supply valve during the final rinse. It also serves as a backup for the pre-rinse and intermediate rinses if the Recovery Tank is busy. *)
 XV4131_Cmd := NOT T1_BUSY AND((D_Step81 OR D_Step83 OR D_Step84 OR D_Step88 OR D_Step100)
 			   OR ((D_Step1 OR D_Step3 OR D_Step4 OR D_Step8 OR D_Step9
 				   OR D_Step41 OR D_Step44 OR D_Step43 OR D_Step48 OR D_Step49)AND T2_BUSY);
 
-(* Rung 28 *)
-(* COMMENT10 *)
+(* Rung 28: Not used. *)
 
-(* Rung 29 *)
-(* CIP_D  To Drain *)
+(* Rung 29: Activates the main valve to the drain (`XV4181_Cmd`) during almost all active steps of the CIP process, ensuring a path is open for the fluid. *)
 XV4181_Cmd := D_Step1 OR D_Step3 OR D_Step4 OR D_Step8 OR D_Step9
 			  OR D_Step21 OR D_Step23 OR D_Step24 OR D_Step28 OR D_Step29
 			  OR D_Step30 OR D_Step41 OR D_Step43 OR D_Step44 OR D_Step48 OR D_Step49
 			  OR D_Step61 OR D_Step63 OR D_Step64 OR D_Step68 OR D_Step69 OR D_Step81
 			  OR D_Step83 OR D_Step84 OR D_Step88 OR D_Step100;
 
-(* Rung 30-32: This block controls the main CIP D pump (`P4169_Start_Cmd`). The pump is activated whenever any of the cleaning or rinsing steps are active, and there are no active hold or stop commands. *)
-(* COMMENT11 *)
+(* Rung 30: Not used. *)
 
-(* Rung 31 *)
-(* CIP_D Pump *)
+(* Rung 31: Checks for a specific condition in step 30 related to the external cooker's state, which is used in the pump start logic. *)
 _Bit := D_Step30 AND (Rx_R20_Steper = 4);
 
-(* Rung 32 *)
-(* CIP_D Pump *)
+(* Rung 32: Controls the main CIP D pump (`P4169_Start_Cmd`). The pump is activated during all active cleaning and rinsing steps, provided there are no "Hold" or "Stop All" commands active. *)
 P4169_Start_Cmd := (_Bit OR D_Step1 OR D_Step3 OR D_Step4 OR D_Step8
 				   OR D_Step9 OR D_Step21 OR D_Step23 OR D_Step24
 				   OR D_Step28 OR D_Step29 OR D_Step41 OR D_Step43

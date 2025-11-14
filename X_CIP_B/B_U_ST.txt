@@ -52,97 +52,41 @@ END_VAR
 *)
 AUX1[0] := B_STAT AND 15;
 
-(* Rung 2 - Temp register 1 *)
-(*
-* Block Instruction Analysis: MOVE_INT
-* Source: Constant value '1'.
-* Destination: Variable 'AUX1[0]' at memory address %R00102.
-*)
+(* Rung 2: Sets the base status to 1 if Stage 1 (pre-rinse) is active. *)
 IF B1_STRT THEN
 	AUX1[0] := 1;
 END_IF;
 
-(* Rung 3 - Temp register 1 *)
-(*
-* Block Instruction Analysis: MOVE_INT
-* Source: Constant value '2'.
-* Destination: Variable 'AUX1[0]' at memory address %R00102.
-*)
+(* Rung 3: Sets the base status to 2 if Stage 2 (chemical wash) is active. *)
 IF B2_STRT THEN
 	AUX1[0] := 2;
 END_IF;
 
-(* Rung 4 - Temp register 1 *)
-(*
-* Block Instruction Analysis: MOVE_INT
-* Source: Constant value '3'.
-* Destination: Variable 'AUX1[0]' at memory address %R00102.
-*)
+(* Rung 4: Sets the base status to 3 if Stage 3 (final rinse) is active. *)
 IF B3_STRT THEN
 	AUX1[0] := 3;
 END_IF;
 
-(* Rung 5 - Temp register 1 *)
-(*
-* Block Instruction Analysis: BIT_SET_WORD
-* This instruction sets a specific bit within the target WORD variable to 1.
-* Target Variable: AUX1[0]
-* Bit to Set: 5 (This corresponds to a value of 2^(5-1) = 16).
-* The ST equivalent uses a bitwise OR operation.
-*)
+(* Rung 5: Sets bit 5 (value 16) of the status word if the CIP B process is stopped (`B_STOP`). This allows the HMI to display a "stopped" status. *)
 IF B_STOP THEN
 	AUX1[0] := AUX1[0] OR 16;
 END_IF;
 
-(* Rung 6 - Temp register 1 *)
-(*
-* Block Instruction Analysis: BIT_SET_WORD
-* This instruction sets a specific bit within the target WORD variable to 1.
-* Target Variable: AUX1[0]
-* Bit to Set: 8 (This corresponds to a value of 2^(8-1) = 128).
-* The ST equivalent uses a bitwise OR operation.
-*)
+(* Rung 6: Sets bit 8 (value 128) of the status word if the CIP B process is in an alarm state (`B_ALARM`). This allows the HMI to display an "alarm" status. *)
 IF B_ALARM THEN
 	AUX1[0] := AUX1[0] OR 128;
 END_IF;
 
-(* Rung 7 - Temp register 1 *)
-(*
-* Block Instruction Analysis: BIT_SET_WORD
-* This instruction sets a specific bit within the target WORD variable to 1.
-* Target Variable: AUX1[0]
-* Bit to Set: 6 (This corresponds to a value of 2^(6-1) = 32).
-* The ST equivalent uses a bitwise OR operation.
-*)
+(* Rung 7: Sets bit 6 (value 32) of the status word if the CIP B process has ended (`B_END`). This allows the HMI to display an "ended" status. *)
 IF B_END THEN
 	AUX1[0] := AUX1[0] OR 32;
 END_IF;
 
-(* Rung 8 - Temp register 1 *)
-(*
-* Block Instruction Analysis: BIT_SET_WORD
-* This instruction sets a specific bit within the target WORD variable to 1.
-* Target Variable: AUX1[0]
-* Bit to Set: 7 (This corresponds to a value of 2^(7-1) = 64).
-* The ST equivalent uses a bitwise OR operation.
-*)
+(* Rung 8: Sets bit 7 (value 64) of the status word if the CIP B process is ready for a new command. This is true when the system is not filling, not full, not in any stage, and not ended. This allows the HMI to display a "ready" status. *)
 IF NOT B_FILLS AND NOT B_FULL AND NOT B1_STRT AND NOT B_END THEN
 	AUX1[0] := AUX1[0] OR 64;
 END_IF;
 
-(* Rung 9 - CIP B Status *)
-(*
-* Block Instruction Analysis: MOVE_INT
-* Source: Variable 'AUX1[0]' at memory address %R00102.
-* Destination: Variable 'B_STAT' at memory address %R09048.
-*)
+(* Rung 9: Assembles the final `B_STAT` word. It first moves the base status and flags from `AUX1[0]` into `B_STAT`, and then adds the reactor number (`B_REAC_num_`). This creates a single, comprehensive status word that can be efficiently read by the HMI. For example, a value of 257 would indicate that reactor 1 is in stage 1. *)
 B_STAT := AUX1[0];
-(*
-* Block Instruction Analysis: ADD_INT
-* This instruction adds the values of two variables and stores the result
-* in a destination variable.
-* Input 1: B_STAT
-* Input 2: B_REAC_num_
-* Output: B_STAT (The result overwrites the first input).
-*)
 B_STAT := B_STAT + B_REAC_num_;

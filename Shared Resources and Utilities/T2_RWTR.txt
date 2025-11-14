@@ -29,10 +29,10 @@ VAR_GLOBAL
 	_Bit : BOOL; (* Temporary bit for Rung 3 debug state view *)
 END_VAR
 
-(* Rung 1: Sets the `T2_FLNG` (filling) flag using a latching logic. The flag is set when the low-level switch (`LOLVL2`) is no longer active, and it remains set until the high-level switch (`HILVL2`) is activated. *)
+(* Rung 1: Latches the `T2_FLNG` (Tank 2 Filling) flag. The filling process starts when the water level rises above the low-level switch (`LOLVL2`) and continues until the high-level switch (`HILVL2`) is reached. This is a classic seal-in logic pattern. *)
 T2_FLNG := (NOT LOLVL2) OR (T2_FLNG AND NOT HILVL2);
 
-(* Rung 2: Sets the `T2_BUSY` interlock. The recovery water tank is considered busy whenever it is in the process of being filled (`T2_FLNG`). This signal is used by the CIP lines to determine if recovery water is available for use. *)
+(* Rung 2: Sets the `T2_BUSY` interlock. The recovery water tank is considered busy whenever it is being filled (`T2_FLNG`). This prevents CIP processes from using the recovery water until the tank is full. *)
 T2_BUSY := T2_FLNG;
 
 (* Rung 3: DEBUG: View current state *)

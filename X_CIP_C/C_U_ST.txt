@@ -81,164 +81,78 @@ VAR_GLOBAL
 	T45_STP AT %M00182 : BOOL; (* Tanks 4,5 stopped HMI *)
 END_VAR
 
-(* Rung 1: *)
-(*
-* Block Instruction Analysis: AND_WORD
-* This instruction performs a bitwise AND operation. It will AND the value
-* of B_STAT with the constant 15 (binary 0000_0000_0000_1111) and store the
-* result in AUX1[0]. This effectively isolates the lower 4 bits of B_STAT.
-*)
+(* Rung 1: Isolates the lower 4 bits of the `C_STAT` word to preserve the stage information from the previous scan. *)
 AUX1[0] := C_STAT AND 15;
 
-(* Rung 2: *)
+(* Rungs 2-4: Sets the base value of the status word based on the current active stage. *)
 IF C1_STRT THEN
 	AUX1[0] := 1;
 END_IF;
 
-(* Rung 3: *)
 IF C2_STRT THEN
 	AUX1[0] := 2;
 END_IF;
 
-(* Rung 4: *)
 IF C3_STRT THEN
 	AUX1[0] := 3;
 END_IF;
 
-(* Rung 5: *)
-(*
-* Block Instruction Analysis: BIT_SET_WORD
-* This instruction sets a specific bit within the target WORD variable to 1.
-* Target Variable: AUX1[0]
-* Bit to Set: 5 (This corresponds to a value of 2^(5-1) = 16).
-* The ST equivalent uses a bitwise OR operation.
-*)
+(* Rung 5: Sets bit 5 of the status word if the CIP C process is stopped. *)
 IF C_STOP THEN
 	AUX1[0] := AUX1[0] OR 16;
 END_IF;
 
-(* Rung 6: *)
-(*
-* Block Instruction Analysis: BIT_SET_WORD
-* This instruction sets a specific bit within the target WORD variable to 1.
-* Target Variable: AUX1[0]
-* Bit to Set: 8 (This corresponds to a value of 2^(8-1) = 128).
-* The ST equivalent uses a bitwise OR operation.
-*)
+(* Rung 6: Sets bit 8 of the status word if the CIP C process is in alarm. *)
 IF C_ALARM THEN
 	AUX1[0] := AUX1[0] OR 128;
 END_IF;
 
-(* Rung 7: *)
-(*
-* Block Instruction Analysis: BIT_SET_WORD
-* This instruction sets a specific bit within the target WORD variable to 1.
-* Target Variable: AUX1[0]
-* Bit to Set: 6 (This corresponds to a value of 2^(6-1) = 32).
-* The ST equivalent uses a bitwise OR operation.
-*)
+(* Rung 7: Sets bit 6 of the status word if the CIP C process has ended. *)
 IF C_END THEN
 	AUX1[0] := AUX1[0] OR 32;
 END_IF;
 
-(* Rung 8: *)
-(*
-* Block Instruction Analysis: BIT_SET_WORD
-* This instruction sets a specific bit within the target WORD variable to 1.
-* Target Variable: AUX1[0]
-* Bit to Set: 7 (This corresponds to a value of 2^(7-1) = 64).
-* The ST equivalent uses a bitwise OR operation.
-*)
+(* Rung 8: Sets bit 7 of the status word if the CIP C process is ready/idle. *)
 IF NOT C_FILLS AND NOT C_FULL AND NOT C1_STRT AND NOT C_END THEN
 	AUX1[0] := AUX1[0] OR 64;
 END_IF;
 
-(* Rung 9: COMMENT0 *)
+(* Rung 9: Not used. *)
 
-(* Rung 10: Temp register 1 *)
-(*
-* Block Instruction Analysis: BIT_SET_WORD
-* This instruction sets a specific bit within the target WORD variable to 1.
-* Target Variable: AUX1[0]
-* Bit to Set: 9 (This corresponds to a value of 2^(9-1) = 256).
-* The ST equivalent uses a bitwise OR operation.
-*)
+(* Rung 10: Sets bit 9 of the status word if the barrel wash is using soda. *)
 IF BR2USES THEN
 	AUX1[0] := AUX1[0] OR 256;
 END_IF;
 
-(* Rung 11: Temp register 1 *)
-(*
-* Block Instruction Analysis: BIT_SET_WORD
-* This instruction sets a specific bit within the target WORD variable to 1.
-* Target Variable: AUX1[0]
-* Bit to Set: 10 (This corresponds to a value of 2^(10-1) = 512).
-* The ST equivalent uses a bitwise OR operation.
-*)
+(* Rung 11: Sets bit 10 of the status word if the barrel system is in alarm. *)
 IF BRL_ALR THEN
 	AUX1[0] := AUX1[0] OR 512;
 END_IF;
 
-(* Rung 12: Temp register 1 *)
-(*
-(*
-* Block Instruction Analysis: BIT_SET_WORD
-* This instruction sets a specific bit within the target WORD variable to 1.
-* Target Variable: AUX1[0]
-* Bit to Set: 14 (This corresponds to a value of 2^(14-1) = 8192).
-* The ST equivalent uses a bitwise OR operation.
-*)
+(* Rung 12: Sets bit 14 of the status word if the soda tank system is stopped. *)
 IF T45_STP THEN
 	AUX1[0] := AUX1[0] OR 8192;
 END_IF;
 
-(* Rung 13: Temp register 1 *)
-(*
-* Block Instruction Analysis: BIT_SET_WORD
-* This instruction sets a specific bit within the target WORD variable to 1.
-* Target Variable: AUX1[0]
-* Bit to Set: 13 (This corresponds to a value of 2^(13-1) = 4096).
-* The ST equivalent uses a bitwise OR operation.
-*)
+(* Rung 13: Sets bit 13 of the status word if the acid tank system is stopped. *)
 IF T3_STP THEN
 	AUX1[0] := AUX1[0] OR 4096;
 END_IF;
 
-(* Rung 14: Temp register 1 *)
-(*
-* Block Instruction Analysis: BIT_SET_WORD
-* This instruction sets a specific bit within the target WORD variable to 1.
-* Target Variable: AUX1[0]
-* Bit to Set: 12 (This corresponds to a value of 2^(12-1) = 2048).
-* The ST equivalent uses a bitwise OR operation.
-*)
+(* Rung 14: Sets bit 12 of the status word if the acid tank system is in alarm. *)
 IF T3_ALR THEN
 	AUX1[0] := AUX1[0] OR 2048;
 END_IF;
 
-(* Rung 15: Temp register 1 *)
-(*
-* Block Instruction Analysis: BIT_SET_WORD
-* This instruction sets a specific bit within the target WORD variable to 1.
-* Target Variable: AUX1[0]
-* Bit to Set: 11 (This corresponds to a value of 2^(11-1) = 1024).
-* The ST equivalent uses a bitwise OR operation.
-*)
+(* Rung 15: Sets bit 11 of the status word if the soda tank system is in alarm. *)
 IF T45_ALR THEN
 	AUX1[0] := AUX1[0] OR 1024;
 END_IF;
 
-(* Rung 16: Temp register 1 *)
-(*
-* Block Instruction Analysis: BIT_SET_WORD
-* This instruction sets a specific bit within the target WORD variable to 1.
-* Target Variable: AUX1[0]
-* Bit to Set: 15(This corresponds to a value of 2^(15-1) = 16384).
-* The ST equivalent uses a bitwise OR operation.
-*)
+(* Rung 16: Sets bit 15 of the status word if the global stop all is active. *)
 IF STOPALL THEN
 	AUX1[0] := AUX1[0] OR 16384;
 END_IF;
 
-(* Rung 17: CIP C Status *)
+(* Rung 17: Moves the value of the temporary register to the final status word. *)
 C_STAT := AUX1[0];

@@ -28,21 +28,13 @@ VAR_GLOBAL
     R00536 AT %R00536 : ARRAY[0..64] OF WORD;
 END_VAR
 
-(* Rung 1: Reset Alarm and Stop for commands 38 & 39 *)
-(*
- * Block Instruction: RANGE_INT
- * This instruction checks if an input value is within an inclusive numerical range.
- * Low Limit (L1): 38
- * High Limit (L2): 39
- * Input (IN): R00536[62] (aliased as MMICMD)
- * The output (Q) is TRUE if IN is >= L1 AND IN is <= L2.
- *)
+(* Rung 1: Resets the CIP B alarm (`B_ALARM`) and the HMI stop flag (`BMMISTP`) when an alarm reset command (38 or 39) is received from the HMI. This allows the operator to clear a fault condition and re-enable the CIP B sequence. *)
 IF (R00536[62] >= 38 AND R00536[62] <= 39) THEN
     B_ALARM := FALSE;
     BMMISTP := FALSE;
 END_IF;
 
-(* Rung 2: Stop Batch Mode *)
+(* Rung 2: Sets the HMI stop flag (`BMMISTP`) when a stop command (36) is received from the HMI. This flag is used by `B_CMD.txt` to halt the CIP B sequence. *)
 IF R00536[62] = 36 THEN
     BMMISTP := TRUE;
 END_IF;

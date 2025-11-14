@@ -61,9 +61,10 @@ END_VAR
 (* Rung 1: COMMENT0                            *)
 (* ============================================ *)
 
-(* ============================================ *)
-(* Rung 2: CIP "A" - Initialize AUX1           *)
-(* ============================================ *)
+(* Rungs 2-4: Un-scales the calculated CIP A conductivity (`C_A_CLC`) back into a raw analog value. This is likely for simulation or for display on an HMI that requires the raw value.
+    - Rung 2: Clears the temporary register `AUX1`, moves the engineering value into `AUX1[0]`, and sets the maximum raw value (32000) in `AUX1[2]`.
+    - Rung 3: Performs the reverse scaling calculation. The engineering value is multiplied by the maximum raw value and then divided by the scaling factor (200).
+    - Rung 4: Moves the un-scaled value to `AIT1010`. This rung is currently disabled. *)
 AUX1[0] := 0;
 AUX1[1] := 0;
 AUX1[2] := 0;
@@ -88,9 +89,7 @@ END_IF;
 (* Rung 5: COMMENT1                            *)
 (* ============================================ *)
 
-(* ============================================ *)
-(* Rung 6: CIP "B" - Initialize AUX1           *)
-(* ============================================ *)
+(* Rungs 6-8: Un-scales the calculated CIP B conductivity (`C_B_CLC`) back into a raw analog value. *)
 AUX1[0] := 0;
 AUX1[1] := 0;
 AUX1[2] := 0;
@@ -113,9 +112,7 @@ R09010 := C_B_CLC;
 (* Rung 9: COMMENT2                            *)
 (* ============================================ *)
 
-(* ============================================ *)
-(* Rung 10: CIP "C" - Initialize AUX1          *)
-(* ============================================ *)
+(* Rungs 10-12: Un-scales the calculated CIP C conductivity (`C_C_CLC`) back into a raw analog value. *)
 AUX1[0] := 0;
 AUX1[1] := 0;
 AUX1[2] := 0;
@@ -138,9 +135,7 @@ R09011 := C_C_CLC;
 (* Rung 13: COMMENT3                           *)
 (* ============================================ *)
 
-(* ============================================ *)
-(* Rung 14: SODA 1/2 - Initialize AUX1         *)
-(* ============================================ *)
+(* Rungs 14-16: Un-scales the calculated Soda Tank conductivity (`C_45CLC`) back into a raw analog value. *)
 AUX1[0] := 0;
 AUX1[1] := 0;
 AUX1[2] := 0;
@@ -164,9 +159,7 @@ END_IF;
 (* Rung 17: COMMENT4                           *)
 (* ============================================ *)
 
-(* ============================================ *)
-(* Rung 18: ACID - Initialize AUX1             *)
-(* ============================================ *)
+(* Rungs 18-23: Un-scales the calculated Acid Tank conductivity (`C_3_CLC`) back into a raw analog value. Note that most of this logic is disabled or non-functional. *)
 IF NOT #ALW_OFF THEN
     AUX1[0] := 0;
     AUX1[1] := 0;
@@ -209,9 +202,7 @@ R09005 := C_3_CLC;
 (* Rung 24: COMMENT5                           *)
 (* ============================================ *)
 
-(* ============================================ *)
-(* Rung 25: ACID TEMP - Initialize AUX1        *)
-(* ============================================ *)
+(* Rungs 25-27: Un-scales the calculated Acid Tank temperature (`T_3_CLC`) back into a raw analog value. *)
 AUX1[0] := 0;
 AUX1[1] := 0;
 AUX1[2] := 0;
@@ -236,9 +227,7 @@ END_IF;
 (* Rung 28: COMMENT6                           *)
 (* ============================================ *)
 
-(* ============================================ *)
-(* Rung 29: SODA1 TEMP - Initialize AUX1       *)
-(* ============================================ *)
+(* Rungs 29-31: Un-scales the calculated Soda Tank 1 temperature (`T_4_CLC`) back into a raw analog value. *)
 AUX1[0] := 0;
 AUX1[1] := 0;
 AUX1[2] := 0;
@@ -261,9 +250,7 @@ R09002 := T_4_CLC;
 (* Rung 32: COMMENT7                           *)
 (* ============================================ *)
 
-(* ============================================ *)
-(* Rung 33: SODA2 TEMP - Initialize AUX1       *)
-(* ============================================ *)
+(* Rungs 33-35: Un-scales the calculated Soda Tank 2 temperature (`T_5_CLC`) back into a raw analog value. *)
 AUX1[0] := 0;
 AUX1[1] := 0;
 AUX1[2] := 0;

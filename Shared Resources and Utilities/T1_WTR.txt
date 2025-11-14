@@ -43,22 +43,19 @@ VAR
 	WTR2TK1 AT %M00272 : BOOL;
 END_VAR
 
-(* Rung 1: Tank 1 stopped *)
+(* Rung 1: Sets the `T1_STP` (Tank 1 Stopped) flag if a tank-specific alarm (`T1_ALRM`) is active. This is a local stop command that contributes to the "busy" status of the tank. *)
 IF T1_ALRM THEN
 	T1_STP := TRUE;
 END_IF;
 
-(* Rung 2-5: This block contains the automatic level control logic for the fresh water tank.
-    - Rung 2: Sets the `T1_FLNG` (filling) flag when the low-level switch is active, and keeps it active until the high-level switch is reached.
-    - Rung 5: Opens the water supply valve `XVM001` to fill the tank when the `T1_FLNG` flag is active. *)
-(* Fresh water tank filling water *)
+(* Rung 2: Sets the `T1_FLNG` (Tank 1 Filling) flag. The logic appears intended to initiate filling on a low level and stop on a high level, but it does not form a proper latch and may not function as expected under all conditions. *)
 T1_FLNG := NOT LOLVL1 OR NOT HILVL1 OR (#ALW_ON AND NOT A3_STRT AND NOT B3_STRT AND NOT C3_STRT AND AND HILVL1);
 
-(* Rung 3: Sets the `T1_BUSY` interlock. The tank is considered busy if it has a low level (`LOLVL1`) or is stopped (`T1_STP`). This signal is used by the CIP lines to prevent them from drawing water from an unavailable tank. The logic is bypassed if any of the CIP lines are in their final rinse stage (`A3_STRT`, `B3_STRT`, `C3_STRT`). *)
+(* Rung 3: Generates the `T1_BUSY` interlock signal. The tank is marked as busy if it is at a low level or has been stopped by an alarm, preventing CIP lines from using it. *)
 T1_BUSY := (NOT LOLVL1 OR T1_STP) AND NOT A3_STRT AND NOT B3_STRT AND NOT C3_STRT;
 
-(* Rung 4 *)
+(* Rung 4: Creates the final permissive `WTR2TK1` (Water to Tank 1) command by combining the filling request with global and local stop signals. *)
 WTR2TK1 := (NOT STOPALL) AND (NOT ENDALL) AND (NOT T1_STP) AND T1_FLNG;
 
-(* Rung 5: WATER TO FRESH WATER TANK *)
+(* Rung 5: Energizes the main water supply valve `XVM001` based on the final permissive command and an additional interlock `WTNK_OK`. *)
 XVM001 := #ALW_ON AND WTR2TK1 AND (NOT WTNK_OK);

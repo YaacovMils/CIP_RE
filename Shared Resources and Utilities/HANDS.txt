@@ -47,10 +47,7 @@ END_VAR
 (* ============================================= *)
 (* No executable code *)
 
-(* ============================================= *)
-(* Rung 2: Copy 5 words from Test_SR to Test_DS *)
-(* ARRAY_MOVE_WORD 5 Test_SR[0],G Test_SNX,G 1 1 Test_DS[0],G *)
-(* ============================================= *)
+(* Rung 2: This rung appears to be leftover test code and is not part of the main operational logic. It copies data between two test arrays. *)
 Test_DS[0] := Test_SR[Test_SNX];
 Test_DS[1] := Test_SR[Test_SNX + 1];
 Test_DS[2] := Test_SR[Test_SNX + 2];
@@ -69,42 +66,29 @@ AUX1[0] := 1;
 (* LABELN LABEL0 - Implemented as REPEAT loop below *)
 
 REPEAT
-    (* ============================================= *)
-    (* Rung 5: Read data from memory arrays *)
-    (* ARRAY_MOVE_WORD 6 - Read 1 word from array of 6 *)
-    (* ============================================= *)
+    (* Rung 5: Reads the Manual/Auto status, the automatic command, and the manual command for the current word. *)
     AUX1[1] := HND_STS_PROXY[AUX1[0] - 1];
     AUX1[2] := XVM_PROXY[AUX1[0] - 1];
     AUX1[3] := XV_PROXY[AUX1[0] - 1];
     
-    (* ============================================= *)
-    (* Rung 6: Bitwise logic operations *)
-    (* ============================================= *)
-    (* AND_WORD 1 AUX1[1],G AUX1[3],G AUX1[3],G *)
+    (* Rung 6: Implements the `(Manual_Command AND Manual_Status)` portion of the logic. *)
     AUX1[3] := AUX1[1] AND AUX1[3];
     
-    (* NOT_WORD 1 AUX1[1],G AUX1[1],G *)
+    (* Inverts the Manual_Status bits. *)
     AUX1[1] := NOT AUX1[1];
     
-    (* AND_WORD 1 AUX1[1],G AUX1[2],G AUX1[2],G *)
+    (* Implements the `(Automatic_Command AND NOT Manual_Status)` portion of the logic. *)
     AUX1[2] := AUX1[1] AND AUX1[2];
     
-    (* ============================================= *)
-    (* Rung 7: Combine and write result *)
-    (* ============================================= *)
-    (* OR_WORD 1 AUX1[3],G AUX1[2],G AUX1[2],G *)
+    (* Rung 7: Combines the results of the manual and automatic logic with an OR operation. *)
     AUX1[2] := AUX1[3] OR AUX1[2];
     
-    (* ARRAY_MOVE_WORD 6 AUX1[2],G 1 AUX1[0],G 1 XV4001,G,%Q00001 *)
-    (* Write 1 word from AUX1[2] to array of 6 at index AUX1[0] *)
+    (* Writes the final, arbitrated command to the physical output word. *)
     XV4001_WRITE_PROXY[AUX1[0] - 1] := AUX1[2];
     
-    (* ============================================= *)
-    (* Rung 8: Increment counter and loop control *)
-    (* ============================================= *)
-    (* ADD_INT AUX1[0],G 1 AUX1[0],G *)
+    (* Rung 8: Increments the loop counter to process the next word. *)
     AUX1[0] := AUX1[0] + 1;
     
-    (* LT_INT AUX1[0],G 7 ** - If AUX1[0] < 7 then JUMРN LABEL0 *)
+    (* The loop continues until all 6 words have been processed. *)
 UNTIL AUX1[0] >= 7
 END_REPEAT;

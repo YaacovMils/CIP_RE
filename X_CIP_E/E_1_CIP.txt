@@ -30,20 +30,20 @@ The execution order is as follows:
 VAR_GLOBAL
 END_VAR
 
-(* Rung 1 *)
+(* Rung 1: Handles all input processing and communication at the start of the scan. It calls the digital input handler, the combined analog input/output handler, and the E-line specific communication task. *)
 E_DI();
 E_AI_AQ();
 RX_TX_E();
 
-(* Rung 2 *)
+(* Rung 2: Executes the main control logic. It calls the step decoder, the error/fault handler, and the general action block that determines which devices should be active. *)
 E_BITAL();
 E_ERR();
 E_GNACT();
 
-(* Rung 3 *)
+(* Rung 3: Manages operator commands, the main state machine, and flow calculations. It calls the operator command handler, the core sequencer logic, and the flow totalizer. *)
 E_OPER();
 E_STRCT();
 FQ_E();
 
-(* Rung 4 *)
+(* Rung 4: Executes the digital output logic at the end of the scan. This ensures that all control logic has been evaluated before the physical outputs are updated. *)
 E_DQ();

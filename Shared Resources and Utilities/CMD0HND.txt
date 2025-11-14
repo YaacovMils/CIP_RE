@@ -29,7 +29,7 @@ VAR_GLOBAL
 	XV4001 AT %Q00001 : BOOL; (* WATER TO FRESH WATER TANK TO "O" *)
 END_VAR
 
-(* Rung 1 *)
+(* Rung 1: Decodes the incoming `MMICMD`. The command is a composite integer where the thousands digit represents the action (1=ON, 2=OFF, 3=AUTO) and the remaining digits represent the device ID. This rung extracts the action into `R00111` and the device ID into `R00101`. *)
 R00111 := MMICMD / 1000;
 R00101 := MMICMD MOD 1000;
 
@@ -52,6 +52,11 @@ R00101 := MMICMD MOD 1000;
  * - 'BIT_SET_WORD' on a BOOL is translated to ':= TRUE;'.
  * - 'BIT_CLR_WORD' on a BOOL is translated to ':= FALSE;'.
  *)
+(* Rungs 2-4: This CASE statement executes the decoded command.
+    - Case 1 (ON): Sets the corresponding bit in the `HND_STS` word to 1 (Manual mode) and turns the device ON.
+    - Case 2 (OFF): Sets the corresponding bit in the `HND_STS` word to 1 (Manual mode) and turns the device OFF.
+    - Case 3 (AUTO): Clears the corresponding bit in the `HND_STS` word to 0 (Auto mode).
+The bitwise operations `SHL` (Shift Left) and `OR` or `AND NOT` are used to manipulate the specific bit corresponding to the device ID. *)
 CASE R00111 OF
 	1: (* Rung 4: Hands status(1=Manual,0-Auto) *)
 		HND_STS := HND_STS OR SHL(WORD#1, R00101);

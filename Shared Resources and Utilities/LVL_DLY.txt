@@ -42,28 +42,28 @@ VAR
 	RTrig_Counter_Enable : R_TRIG;
 END_VAR
 
-(* Rung 1: Internal Bit *)
+(* Rung 1: This rung is part of a 5-second timer. It sets an internal bit (`T00001`) when the timer has elapsed. *)
 T00001 := (LVLTMR[0] >= 5);
 
-(* Rung 2: Internal Bit *)
+(* Rung 2: This is the start of the 5-second timer. It uses a rising edge trigger on the 1-second clock pulse. *)
 RTrig_Counter_Enable(CLK := #T_SEC);
 
-(* Reset counter when T00001 is TRUE *)
+(* Resets the timer when it has elapsed. *)
 IF T00001 THEN
     LVLTMR[0] := 0;
 END_IF;
+(* Increments the timer on each rising edge of the 1-second clock pulse. *)
 IF RTrig_Counter_Enable.Q THEN
-    (* Increment counter on rising edge of #T_SEC *)
     IF LVLTMR[0] < 5 THEN
         LVLTMR[0] := LVLTMR[0] + 1;
     END_IF;
 END_IF;
 
-(* Output is TRUE when counter >= preset *)
+(* Sets the timer output bit (`T00002`) when the timer has elapsed. *)
 T00002 := (LVLTMR[0] >= 5);
 
 
-(* Rung 3: השהיה-גובה נמוך מאוד *)
+(* Rung 3: After the 5-second startup delay, this rung copies the state of the physical level switch inputs to their corresponding internal memory flags. The `SIM_ON` flag allows this delay to be bypassed for testing. *)
 IF T00002 OR SIM_ON THEN
     LOLVL4 := LSL3067;
 	HILVL5 := LSH3068;

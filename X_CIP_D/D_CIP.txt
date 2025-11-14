@@ -26,35 +26,35 @@ The execution order is as follows:
 *)
 
 (* This master routine orchestrates the entire CIP D process by calling a series of sub-programs in a specific order. This modular approach separates I/O handling, error checking, sequencing logic, and physical output control into distinct files, making the system easier to manage and troubleshoot. *)
-(* Rung 1 *)
+(* Rung 1: Calls the analog input scaling program. *)
 D_AI();
 
-(* Rung 2 *)
+(* Rung 2: Calls the analog output scaling program. *)
 D_AQ();
 
-(* Rung 3 *)
+(* Rung 3: Calls the digital input processing program. *)
 D_DI();
 
-(* Rung 4 *)
+(* Rung 4: Calls the digital output processing program. *)
 D_DQ();
 
-(* Rung 5 *)
+(* Rung 5: Calls the error handling and fault monitoring program. *)
 D_ERROR();
 
-(* Rung 6 *)
+(* Rung 6: Calls the main sequencer and state machine logic. *)
 D_STRCT();
 
-(* Rung 7 *)
+(* Rung 7: Calls the program that activates physical outputs based on the current step. *)
 D_GNACT();
 
-(* Rung 8 *)
+(* Rung 8: Calls the data transmission communication program. *)
 TX_COMM();
 
-(* Rung 9 *)
+(* Rung 9: Calls the data reception communication program. *)
 RX_COMM();
 
-(* Rung 10 *)
+(* Rung 10: Calls the flow calculation and totalization program. *)
 FQ();
 
-(* Rung 11 *)
+(* Rung 11: Calls the operator interface and HMI logic program. *)
 D_OPER();
